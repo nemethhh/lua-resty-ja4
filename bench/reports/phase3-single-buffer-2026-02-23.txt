@@ -1,0 +1,15 @@
+=== Micro-benchmarks ===
+Warmup: 100 | Measured: 100000 iterations
+
+Function                    minimal         typical         heavy
+----------------------------------------------------------------------------
+ja4.build()                 462.4K ops/s    246.2K ops/s    132.9K ops/s
+ja4h.build()                1.13M ops/s     207.8K ops/s    131.2K ops/s
+ja4.build() raw             3.96M ops/s     664.1K ops/s    242.4K ops/s
+ja4h.build() raw            9.41M ops/s     822.2K ops/s    333.2K ops/s
+sha256_hex12()              1.17M ops/s     (input-size independent)
+parse_sig_algs()            564.62M ops/s   2.99M ops/s     1.92M ops/s
+parse_cookies()             n/a             1.49M ops/s     519.7K ops/s
+parse_raw_header_names()    2.28M ops/s     1.01M ops/s     585.6K ops/s
+parse_alpn()                848.87M ops/s   725.04M ops/s   770.90M ops/s
+parse_accept_language()     n/a             5.22M ops/s     5.22M ops/s

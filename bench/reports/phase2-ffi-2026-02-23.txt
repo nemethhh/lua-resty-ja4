@@ -1,0 +1,205 @@
+docker build -f Dockerfile.bench -t lua-resty-ja4-bench .
+#0 building with "default" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile.bench
+#1 transferring dockerfile: 149B done
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/openresty/openresty:1.27.1.1-0-bookworm-fat
+#2 DONE 0.7s
+
+#3 [internal] load .dockerignore
+#3 transferring context: 108B done
+#3 DONE 0.0s
+
+#4 [1/4] FROM docker.io/openresty/openresty:1.27.1.1-0-bookworm-fat@sha256:a11f47c1926c842720a31f359e265ad572e890053a5703906988b86c057a0c90
+#4 DONE 0.0s
+
+#5 [internal] load build context
+#5 transferring context: 34.28kB done
+#5 DONE 0.0s
+
+#6 [2/4] WORKDIR /app
+#6 CACHED
+
+#7 [3/4] COPY lib/ /app/lib/
+#7 DONE 0.1s
+
+#8 [4/4] COPY bench/ /app/bench/
+#8 DONE 0.1s
+
+#9 exporting to image
+#9 exporting layers 0.1s done
+#9 writing image sha256:cb9f4737ebe58a414f9f6e7a4e8eec971f3200bded3948d832d4a17b3f7846eb done
+#9 naming to docker.io/library/lua-resty-ja4-bench 0.0s done
+#9 DONE 0.1s
+=== Running all JIT analysis targets ===
+docker run --rm lua-resty-ja4-bench resty -I /app/lib -I /app/bench /app/bench/microbench.lua
+
+=== Micro-benchmarks ===
+Warmup: 100 | Measured: 100000 iterations
+
+Function                    minimal         typical         heavy           
+----------------------------------------------------------------------------
+ja4.build()                 440.1K ops/s    242.3K ops/s    131.8K ops/s    
+ja4h.build()                885.4K ops/s    200.9K ops/s    120.7K ops/s    
+sha256_hex12()              1.13M ops/s     (input-size independent)
+parse_sig_algs()            573.00M ops/s   3.47M ops/s     2.10M ops/s     
+parse_cookies()             n/a             1.45M ops/s     556.4K ops/s    
+parse_raw_header_names()    459.24M ops/s   1.20M ops/s     612.5K ops/s    
+parse_alpn()                1186.20M ops/s  1117.36M ops/s  985.47M ops/s   
+parse_accept_language()     n/a             5.81M ops/s     5.77M ops/s     
+
+docker run --rm lua-resty-ja4-bench resty -I /app/lib -I /app/bench /app/bench/alloc_track.lua
+
+=== Allocation Analysis ===
+Warmup: 100 | Measured: 1000 iterations (GC stopped)
+
+--- Profile: minimal ---
+
+Function                    Bytes/call    Pressure
+----------------------------------------------------
+ja4.build()                 3             minimal
+ja4h.build()                6             minimal
+sha256_hex12()              3             minimal
+parse_sig_algs()            99            low
+parse_raw_header_names()    7             minimal
+
+  Heap after 1000 full cycles (GC on): 3907.4 KB (delta: +6.7 KB)
+
+--- Profile: typical ---
+
+Function                    Bytes/call    Pressure
+----------------------------------------------------
+ja4.build()                 3             minimal
+ja4h.build()                305           moderate
+sha256_hex12()              3             minimal
+parse_sig_algs()            170           low
+parse_cookies()             274           moderate
+parse_raw_header_names()    169           low
+
+  Heap after 1000 full cycles (GC on): 4287.7 KB (delta: +277.6 KB)
+
+--- Profile: heavy ---
+
+Function                    Bytes/call    Pressure
+----------------------------------------------------
+ja4.build()                 2             minimal
+ja4h.build()                558           moderate
+sha256_hex12()              3             minimal
+parse_sig_algs()            233           low
+parse_cookies()             546           moderate
+parse_raw_header_names()    305           moderate
+
+  Heap after 1000 full cycles (GC on): 4600.1 KB (delta: +536.0 KB)
+
+docker run --rm lua-resty-ja4-bench resty -I /app/lib -I /app/bench /app/bench/jit_trace.lua
+
+=== JIT Trace Analysis (jit.v) ===
+Profile: typical | Iterations: 200
+Running all functions to trigger JIT compilation...
+
+--- Trace events ---
+
+[TRACE   3 utils.lua:106 loop]
+[TRACE --- (3/9) utils.lua:110 -- loop unroll limit reached at ja4.lua:42]
+[TRACE   4 (3/9) utils.lua:110 -> 3]
+[TRACE   5 (3/4) utils.lua:110 -> 3]
+[TRACE   6 (3/7) utils.lua:110 -> 3]
+[TRACE   7 utils.lua:120 loop]
+[TRACE   8 ja4.lua:30 loop]
+[TRACE   9 utils.lua:103 loop]
+[TRACE  10 ja4.lua:41 loop]
+[TRACE  11 utils.lua:141 loop]
+[TRACE  12 (9/9) utils.lua:106 -> 3]
+[TRACE  13 (4/2) utils.lua:112 -> 7]
+[TRACE  14 (7/16) utils.lua:132 -> 10]
+[TRACE  15 (7/1) utils.lua:125 -> 7]
+[TRACE  16 (8/3) ja4.lua:33 -> 9]
+[TRACE  17 (5/6) utils.lua:110 -> 9]
+[TRACE  18 (10/7) ja4.lua:41 -> 10]
+[TRACE  19 (10/9) ja4.lua:48 -> 9]
+[TRACE  20 (11/16) utils.lua:153 -> 8]
+[TRACE  21 (10/1) ja4.lua:41 -> 10]
+[TRACE  22 (11/1) utils.lua:146 -> 11]
+[TRACE  23 (13/1) utils.lua:112 -> 7]
+[TRACE  24 (14/1) utils.lua:132 -> 11]
+[TRACE  25 (6/2) utils.lua:112 -> 9]
+[TRACE  26 (25/1) utils.lua:112 -> 9]
+[TRACE  27 jit_trace.lua:25 loop]
+[TRACE  28 utils.lua:216 loop]
+[TRACE  29 (28/7) utils.lua:223 -> 28]
+[TRACE  30 utils.lua:240 loop]
+[TRACE  31 (30/22) utils.lua:248 -> 30]
+[TRACE  32 utils.lua:297 loop]
+[TRACE  33 (32/15) utils.lua:310 -> 32]
+[TRACE  34 (32/6) utils.lua:316 -> 32]
+[TRACE  35 (32/11) utils.lua:300 -> 32]
+[TRACE  36 (33/1) utils.lua:311 -> 32]
+[TRACE  37 utils.lua:175 return]
+[TRACE --- (37/2) utils.lua:178 -- loop unroll limit reached at utils.lua:195]
+[TRACE  38 jit_trace.lua:29 loop]
+
+--- Summary ---
+
+  Traces compiled: 36
+  Traces aborted:  2
+
+  Abort reasons:
+    1x  --- (3/9) utils.lua:110 -- loop unroll limit reached at ja4.lua:42
+    1x  --- (37/2) utils.lua:178 -- loop unroll limit reached at utils.lua:195
+
+--- Guide ---
+
+  [TRACE N file:line loop]      compiled loop trace (good)
+  [TRACE N file:line -> M]      trace stitched to trace M (good)
+  [TRACE --- file:line -- ...]  trace ABORTED (investigate)
+
+  Common abort reasons:
+    NYI: <op>        LuaJIT cannot compile this operation
+    leaving loop     loop exits compiled region
+    blacklisted      trace failed too many times
+
+  Good: all hot paths compiled. Bad: NYI on hot paths.
+
+docker run --rm lua-resty-ja4-bench resty -I /app/lib -I /app/bench /app/bench/jit_profile.lua
+
+=== CPU Profile (jit.p) ===
+Profile: typical | Warmup: 500 | Measured: 500000 iterations
+
+--- Function-level: ja4.build() + ja4h.build() ---
+
+38%  sha256_hex12
+26%  sha256_hex12_buf
+16%  isort
+13%  build
+ 3%  parse_cookies
+
+--- Line-level: ja4.build() + ja4h.build() ---
+
+53%  utils.lua:64
+12%  utils.lua:112
+12%  utils.lua:82
+ 6%  utils.lua:71
+ 6%  utils.lua:107
+ 6%  utils.lua:108
+ 6%  ja4h.lua:66
+
+--- Function-level: utility functions ---
+
+37%  parse_cookies
+29%  parse_raw_header_names
+28%  sha256_hex12
+ 3%  parse_sig_algs
+ 3%  file_gen
+
+--- Guide ---
+
+  Higher % = more CPU time in that function/line.
+  [C]  = C function (FFI, built-in)
+  [G]  = garbage collector — should be ~0%%
+  [I]  = interpreter (not JIT-compiled) — investigate if high
+  [J]  = JIT-compiled machine code — ideal for hot paths
+
+
+=== All analyses complete ===

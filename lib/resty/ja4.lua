@@ -1,0 +1,232 @@
+local ffi = require "ffi"
+local ffi_new = ffi.new
+local ffi_string = ffi.string
+local ffi_copy = ffi.copy
+local byte = string.byte
+local math_min = math.min
+local utils = require "resty.ja4.utils"
+local new_tab = utils.new_tab
+local isort = utils.isort
+local csv_buf = utils.csv_buf
+local write_hex4_csv = utils.write_hex4_csv
+local append_hex4_csv = utils.append_hex4_csv
+local sha256_to_buf = utils.sha256_to_buf
+local EMPTY_HASH = utils.EMPTY_HASH
+local NUM2 = utils.NUM2
+
+local cipher_hexes = new_tab(40, 0)
+local ext_hexes = new_tab(30, 0)
+-- Raw mode worst case: 10 (section_a) + 1 + 494 (99 ciphers) + 1 + 494 (99 exts)
+-- + 1 + ~200 (sig_algs) ≈ 1200B. Hash mode: fixed 36B. 2048B covers all cases.
+local out_buf = ffi_new("uint8_t[2048]")
+
+-- Load ssl.clienthello once at module load (not per-call).
+-- pcall here handles non-SSL or non-OpenResty environments gracefully.
+local ok_clt, ssl_clt = pcall(require, "ngx.ssl.clienthello")
+
+local _M = {
+    _VERSION = "0.2.0"
+}
+
+local _hash_mode = true
+
+function _M.configure(opts)
+    if opts and opts.hash ~= nil then
+        _hash_mode = opts.hash
+    end
+end
+
+-- Fill buffer with hex-encoded cipher values. Returns count.
+-- Separate function gives JIT a clean trace boundary.
+local function fill_cipher_hexes(ciphers, buf)
+    local n = #ciphers
+    for i = 1, n do
+        buf[i] = utils.to_hex4(ciphers[i])
+    end
+    return n
+end
+
+-- Filter extensions into buffer, excluding SNI (0x0000) and ALPN (0x0010).
+-- Returns count. Separate function eliminates JIT abort
+-- ("leaving loop in root trace").
+local function filter_extensions(extensions, buf)
+    local n = 0
+    for i = 1, #extensions do
+        local ext = extensions[i]
+        if ext ~= 0x0000 and ext ~= 0x0010 then
+            n = n + 1
+            buf[n] = utils.to_hex4(ext)
+        end
+    end
+    return n
+end
+
+-- Build JA4 fingerprint from pre-extracted data.
+-- Input table fields:
+--   protocol: "t" (TCP), "q" (QUIC), "d" (DTLS)
+--   version: "13", "12", "11", "10", "s3", "s2", "00"
+--   sni: "d" (domain) or "i" (IP)
+--   ciphers: array of uint16 cipher suite IDs (GREASE already filtered)
+--   extensions: array of uint16 extension type IDs (GREASE already filtered)
+--   alpn: 2-char ALPN code (e.g. "h2", "h1", "00")
+--   sig_algs: array of 4-char hex strings in original order, or nil
+-- Returns: fingerprint string (hash or raw depending on configure), or nil, err
+function _M.build(data)
+    if not data then
+        return nil, "no data"
+    end
+
+    local cipher_count = math_min(#data.ciphers, 99)
+    local ext_count = math_min(#data.extensions, 99)
+
+    -- Section A: 10 bytes directly into out_buf via byte writes + NUM2 lookup
+    out_buf[0] = byte(data.protocol)
+    local ver = data.version
+    out_buf[1] = byte(ver, 1); out_buf[2] = byte(ver, 2)
+    out_buf[3] = byte(data.sni)
+    local cc = NUM2[cipher_count]
+    out_buf[4] = byte(cc, 1); out_buf[5] = byte(cc, 2)
+    local ec = NUM2[ext_count]
+    out_buf[6] = byte(ec, 1); out_buf[7] = byte(ec, 2)
+    local alp = data.alpn
+    out_buf[8] = byte(alp, 1); out_buf[9] = byte(alp, 2)
+
+    out_buf[10] = 0x5F  -- '_'
+    local pos = 11
+
+    -- Sort ciphers and extensions (shared between hash/raw modes)
+    local cn = fill_cipher_hexes(data.ciphers, cipher_hexes)
+    for i = cn + 1, #cipher_hexes do cipher_hexes[i] = nil end
+    isort(cipher_hexes, cn)
+
+    local ext_n = filter_extensions(data.extensions, ext_hexes)
+    for i = ext_n + 1, #ext_hexes do ext_hexes[i] = nil end
+    isort(ext_hexes, ext_n)
+
+    if _hash_mode then
+        -- Section B: sorted ciphers -> csv_buf -> SHA256 -> 12 hex bytes to out_buf
+        if cn == 0 then
+            ffi_copy(out_buf + pos, EMPTY_HASH, 12)
+        else
+            local csv_len = write_hex4_csv(cipher_hexes, cn)
+            sha256_to_buf(csv_buf, csv_len, out_buf, pos)
+        end
+        pos = pos + 12  -- 23
+
+        out_buf[pos] = 0x5F; pos = pos + 1  -- 24
+
+        -- Section C: sorted exts + sig_algs -> csv_buf -> SHA256 -> 12 hex bytes
+        local ext_csv_len = write_hex4_csv(ext_hexes, ext_n)
+        local sc_len = ext_csv_len
+        if data.sig_algs and #data.sig_algs > 0 then
+            csv_buf[sc_len] = 0x5F  -- '_'
+            sc_len = append_hex4_csv(data.sig_algs, #data.sig_algs, sc_len + 1)
+        end
+        if ext_n == 0 and (not data.sig_algs or #data.sig_algs == 0) then
+            ffi_copy(out_buf + pos, EMPTY_HASH, 12)
+        else
+            sha256_to_buf(csv_buf, sc_len, out_buf, pos)
+        end
+        pos = pos + 12  -- 36
+    else
+        -- Section B raw: hex CSV directly into out_buf
+        pos = utils.write_hex4_csv_at(cipher_hexes, cn, out_buf, pos)
+
+        out_buf[pos] = 0x5F; pos = pos + 1
+
+        -- Section C raw: exts CSV + '_' + sig_algs CSV
+        pos = utils.write_hex4_csv_at(ext_hexes, ext_n, out_buf, pos)
+        if data.sig_algs and #data.sig_algs > 0 then
+            out_buf[pos] = 0x5F; pos = pos + 1
+            pos = utils.write_hex4_csv_at(data.sig_algs, #data.sig_algs, out_buf, pos)
+        end
+    end
+
+    return ffi_string(out_buf, pos)
+end
+
+-- ngx.ctx storage
+local CTX_KEY = "ja4_fingerprint"
+
+function _M.store(val)
+    ngx.ctx[CTX_KEY] = val
+end
+
+function _M.get()
+    return ngx.ctx[CTX_KEY]
+end
+
+local VERSION_PRIORITY = {
+    ["SSLv2"]   = 1,
+    ["SSLv3"]   = 2,
+    ["TLSv1"]   = 3,
+    ["TLSv1.1"] = 4,
+    ["TLSv1.2"] = 5,
+    ["TLSv1.3"] = 6,
+}
+
+-- Compute JA4 from current ssl_client_hello context.
+-- Must be called from ssl_client_hello_by_lua_block.
+-- Stores result in ngx.ctx automatically.
+-- Returns: fingerprint string (or nil, err)
+function _M.compute()
+    if not ok_clt then
+        return nil, "ngx.ssl.clienthello not available"
+    end
+
+    -- Protocol: always TCP in OpenResty
+    local protocol = "t"
+
+    -- TLS version: prefer supported_versions extension, fallback
+    local version_code = "00"
+    local versions = ssl_clt.get_supported_versions()
+    if versions and #versions > 0 then
+        local best_ver = nil
+        local best_pri = 0
+        for i = 1, #versions do
+            local pri = VERSION_PRIORITY[versions[i]] or 0
+            if pri > best_pri then
+                best_pri = pri
+                best_ver = versions[i]
+            end
+        end
+        version_code = utils.tls_version_code(best_ver)
+    end
+
+    -- SNI
+    local sni_name = ssl_clt.get_client_hello_server_name()
+    local sni = sni_name and "d" or "i"
+
+    -- Ciphers (GREASE pre-filtered by lua-resty-core)
+    local ciphers = ssl_clt.get_client_hello_ciphers() or {}
+
+    -- Extensions (GREASE pre-filtered by lua-resty-core)
+    local extensions = ssl_clt.get_client_hello_ext_present() or {}
+
+    -- ALPN: parse raw extension type 16
+    local alpn_raw = ssl_clt.get_client_hello_ext(16)
+    local alpn = utils.parse_alpn(alpn_raw)
+
+    -- Signature algorithms: parse raw extension type 13
+    local sig_algs_raw = ssl_clt.get_client_hello_ext(13)
+    local sig_algs = utils.parse_sig_algs(sig_algs_raw)
+
+    local result, err = _M.build({
+        protocol   = protocol,
+        version    = version_code,
+        sni        = sni,
+        ciphers    = ciphers,
+        extensions = extensions,
+        alpn       = alpn,
+        sig_algs   = sig_algs,
+    })
+
+    if not result then
+        return nil, err
+    end
+
+    _M.store(result)
+    return result
+end
+
+return _M

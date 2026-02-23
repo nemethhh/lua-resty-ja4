@@ -1,0 +1,4 @@
+FROM openresty/openresty:1.27.1.1-0-bookworm-fat
+WORKDIR /app
+COPY lib/ /app/lib/
+COPY bench/ /app/bench/

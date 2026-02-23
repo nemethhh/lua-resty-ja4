@@ -1,0 +1,4 @@
+.worktrees/
+bench/reports/*
+!bench/reports/baseline-*.txt
+!bench/reports/phase*-*.txt

@@ -9,6 +9,15 @@ test: test-build
 test-verbose: test-build
 	docker run --rm --init lua-resty-ja4-test prove -v -r t/
 
+# --- E2E Tests ---
+.PHONY: e2e e2e-clean
+
+e2e:
+	docker compose -f e2e/docker-compose.e2e.yml up --build --abort-on-container-exit --exit-code-from tests
+
+e2e-clean:
+	docker compose -f e2e/docker-compose.e2e.yml down --rmi local --volumes --remove-orphans
+
 # --- Performance Analysis ---
 .PHONY: bench-build jit-trace jit-dump jit-profile jit-alloc jit-bench jit-all jit-report
 

@@ -6,13 +6,38 @@
 
 **Architecture:** Two-container Docker Compose — OpenResty (nginx with JA4/JA4H wired up via response headers) and a Python pytest client making real TLS connections. Two server blocks (port 443 hash, port 8443 raw) with explicit `configure()` calls to avoid shared module-level state leakage. `worker_processes 1` + sequential tests = no concurrency issues.
 
-**Tech Stack:** OpenResty 1.27.1.1, Python 3.12, pytest, stdlib ssl + http.client
+**Tech Stack:** OpenResty 1.29.2.1 (built from source), Python 3.12, pytest, stdlib ssl + http.client
 
 **Design doc:** `docs/plans/2026-02-23-e2e-tests-design.md`
 
+## Progress
+
+### COMPLETED — Architecture changes from original plan:
+- **OpenResty 1.29.2.1** required (not 1.27.1.2) — `get_client_hello_ciphers` and `get_client_hello_ext_present` APIs only exist in lua-nginx-module v0.10.29+ / lua-resty-core v0.1.32+
+- **No custom Dockerfile.nginx** — use the original `docs/docker-openresty/jammy/Dockerfile` directly, pass `RESTY_VERSION=1.29.2.1` via compose build args
+- **Volume mounts instead of COPY** — `lib/` and `e2e/nginx.conf` mounted at runtime, base image stays clean
+- **Self-signed cert** generated at container startup via compose `command`, not baked into image
+
+### COMPLETED files (verified working):
+- `e2e/nginx.conf` — two server blocks (443 hash, 8443 raw), ja4.compute() confirmed working
+- `e2e/conftest.py` — pytest fixtures (ssl_ctx_tls13, ssl_ctx_tls12, hash_request, raw_request)
+- `e2e/Dockerfile.tests` — Python 3.12-slim + pytest
+- `e2e/docker-compose.e2e.yml` — builds nginx from docs/docker-openresty/jammy/Dockerfile, mounts lib/ and nginx.conf
+- `e2e/Dockerfile.nginx` was DELETED (no longer needed)
+
+### NOT YET COMMITTED:
+- `git reset HEAD` needed — accidental `git add -A` staged docs/ embedded repos
+- Then: `git add e2e/` and commit the restructured e2e infrastructure
+
+### REMAINING tasks:
+- Task 5: Write `e2e/test_ja4.py` (currently placeholder)
+- Task 6: Write `e2e/test_ja4h.py` (currently placeholder)
+- Task 7: Add Makefile targets (`make e2e`, `make e2e-clean`)
+- Task 8: Verify .dockerignore, final verification
+
 ---
 
-### Task 1: Create nginx Dockerfile and self-signed cert
+### Task 1: Create nginx Dockerfile and self-signed cert — COMPLETED (then deleted, replaced by compose approach)
 
 **Files:**
 - Create: `e2e/Dockerfile.nginx`

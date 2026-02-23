@@ -12,15 +12,9 @@ Copy the library into your OpenResty Lua package path:
 cp -r lib/resty/* /usr/local/openresty/lualib/resty/
 ```
 
-**Requirements:** OpenResty **1.29.2.1** or later with `lua-resty-core` and LuaJIT FFI.
+**Requirements:** OpenResty **1.27.1.2** or later with LuaJIT FFI.
 
-> **Note:** JA4 TLS fingerprinting requires `ssl.clienthello.get_client_hello_ciphers` and
-> `get_client_hello_ext_present` APIs, which were added in lua-nginx-module v0.10.29 /
-> lua-resty-core v0.1.32. These ship with OpenResty 1.29.2.1, which has not been formally
-> released yet — source tarball is available at
-> https://openresty.org/download/openresty-1.29.2.1.tar.gz.
-> Earlier versions (including 1.27.1.2) bundle older modules that lack these APIs.
-> JA4H HTTP fingerprinting works on any OpenResty version.
+JA4 TLS fingerprinting uses direct OpenSSL FFI calls via `ngx.ssl.get_req_ssl_pointer()`, which is available since OpenResty 1.27. JA4H HTTP fingerprinting works on any OpenResty version.
 
 ## Usage
 
@@ -120,7 +114,7 @@ Tests use [Test::Nginx](https://github.com/openresty/test-nginx) and run in Dock
 ```bash
 make test            # unit tests
 make test-verbose    # verbose output
-make e2e             # end-to-end tests (Docker Compose, builds OpenResty 1.29.2.1)
+make e2e             # end-to-end tests (Docker Compose, tests OpenResty 1.27 + 1.29)
 make e2e-clean       # remove e2e containers and images
 ```
 

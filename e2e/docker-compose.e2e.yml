@@ -1,8 +1,8 @@
 services:
   nginx:
     build:
-      context: ../docs/docker-openresty
-      dockerfile: jammy/Dockerfile
+      context: ..
+      dockerfile: e2e/Dockerfile.openresty
       args:
         RESTY_VERSION: "1.29.2.1"
         RESTY_J: "4"

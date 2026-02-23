@@ -1,0 +1,17 @@
+FROM openresty/openresty:1.27.1.1-0-bookworm-fat
+
+RUN apt-get update && apt-get install -y curl \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Generate self-signed cert at build time
+RUN openssl req -x509 -newkey rsa:2048 -keyout /etc/nginx/server.key \
+    -out /etc/nginx/server.crt -days 365 -nodes \
+    -subj "/CN=nginx"
+
+WORKDIR /app
+COPY lib/ /app/lib/
+COPY e2e/nginx.conf /usr/local/openresty/nginx/conf/nginx.conf
+
+EXPOSE 443 8443
+
+CMD ["openresty", "-g", "daemon off;"]

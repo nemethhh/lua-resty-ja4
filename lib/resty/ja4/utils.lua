@@ -26,6 +26,20 @@ local _M = {
 _M.new_tab = new_tab
 _M.EMPTY_HASH = "000000000000"
 
+-- GREASE detection (RFC 8701): 0x0a0a, 0x1a1a, ..., 0xfafa
+local function is_grease(val)
+    local hi = rshift(val, 8)
+    local lo = band(val, 0xff)
+    return hi == lo and band(lo, 0x0f) == 0x0a
+end
+_M.is_grease = is_grease
+
+-- OpenSSL uint16 legacy version -> JA4 2-char code
+_M.LEGACY_VERSION_MAP = {
+    [0x0304] = "13", [0x0303] = "12", [0x0302] = "11",
+    [0x0301] = "10", [0x0300] = "s3", [0x0002] = "s2",
+}
+
 -- Pre-computed uint16 → 4-char hex string lookup table.
 -- Built once at module load (~256KB). Eliminates ffi_string allocations
 -- from the hot path — every to_hex4() call becomes a single table index.

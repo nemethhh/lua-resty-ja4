@@ -1,5 +1,31 @@
 services:
-  nginx:
+  nginx-1.27:
+    build:
+      context: ..
+      dockerfile: e2e/Dockerfile.openresty
+      args:
+        RESTY_VERSION: "1.27.1.2"
+        RESTY_J: "4"
+    volumes:
+      - ../lib:/app/lib:ro
+      - ./nginx.conf:/usr/local/openresty/nginx/conf/nginx.conf:ro
+    command:
+      - /bin/sh
+      - -c
+      - |
+        mkdir -p /etc/nginx
+        openssl req -x509 -newkey rsa:2048 \
+          -keyout /etc/nginx/server.key -out /etc/nginx/server.crt \
+          -days 365 -nodes -subj '/CN=ja4-e2e' 2>/dev/null
+        openresty -g 'daemon off;'
+    healthcheck:
+      test: ["CMD", "curl", "-kf", "https://localhost/health"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  nginx-1.29:
     build:
       context: ..
       dockerfile: e2e/Dockerfile.openresty
@@ -25,14 +51,26 @@ services:
       retries: 10
       start_period: 5s
 
-  tests:
+  tests-1.27:
     build:
       context: ..
       dockerfile: e2e/Dockerfile.tests
     depends_on:
-      nginx:
+      nginx-1.27:
         condition: service_healthy
     environment:
-      - NGINX_HOST=nginx
+      - NGINX_HOST=nginx-1.27
+      - NGINX_PORT=443
+      - NGINX_RAW_PORT=8443
+
+  tests-1.29:
+    build:
+      context: ..
+      dockerfile: e2e/Dockerfile.tests
+    depends_on:
+      nginx-1.29:
+        condition: service_healthy
+    environment:
+      - NGINX_HOST=nginx-1.29
       - NGINX_PORT=443
       - NGINX_RAW_PORT=8443

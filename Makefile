@@ -13,7 +13,8 @@ test-verbose: test-build
 .PHONY: e2e e2e-clean
 
 e2e:
-	docker compose -f e2e/docker-compose.e2e.yml up --build --abort-on-container-exit --exit-code-from tests
+	docker compose -f e2e/docker-compose.e2e.yml up --build --abort-on-container-exit --exit-code-from tests-1.27 nginx-1.27 tests-1.27
+	docker compose -f e2e/docker-compose.e2e.yml up --build --abort-on-container-exit --exit-code-from tests-1.29 nginx-1.29 tests-1.29
 
 e2e-clean:
 	docker compose -f e2e/docker-compose.e2e.yml down --rmi local --volumes --remove-orphans

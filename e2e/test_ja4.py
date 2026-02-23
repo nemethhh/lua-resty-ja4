@@ -30,9 +30,8 @@ class TestJA4Hash:
         headers, _ = hash_request(ctx=ssl_ctx_tls12)
         ja4 = headers["x-ja4"]
         assert JA4_HASH_RE.match(ja4), f"JA4 '{ja4}' doesn't match hash format"
-        # Pure TLS 1.2 clients don't send supported_versions extension,
-        # so ja4.lua reports "00" (no fallback to legacy version field yet)
-        assert ja4[1:3] == "00", f"Expected TLS 1.2 version '00', got '{ja4[1:3]}'"
+        # TLS 1.2 clients use legacy version field (SSL_client_hello_get0_legacy_version)
+        assert ja4[1:3] == "12", f"Expected TLS 1.2 version '12', got '{ja4[1:3]}'"
 
     def test_ja4_deterministic(self, hash_request, ssl_ctx_tls13):
         h1, _ = hash_request(ctx=ssl_ctx_tls13)

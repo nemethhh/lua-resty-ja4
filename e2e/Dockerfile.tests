@@ -1,0 +1,8 @@
+FROM python:3.12-slim
+
+RUN pip install --no-cache-dir pytest
+
+WORKDIR /app
+COPY e2e/conftest.py e2e/test_ja4.py e2e/test_ja4h.py /app/
+
+CMD ["pytest", "-v", "--tb=short"]

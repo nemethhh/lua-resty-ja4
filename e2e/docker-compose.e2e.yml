@@ -1,0 +1,25 @@
+services:
+  nginx:
+    build:
+      context: ..
+      dockerfile: e2e/Dockerfile.nginx
+      args:
+        RESTY_J: "4"
+    healthcheck:
+      test: ["CMD", "curl", "-kf", "https://localhost/health"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  tests:
+    build:
+      context: ..
+      dockerfile: e2e/Dockerfile.tests
+    depends_on:
+      nginx:
+        condition: service_healthy
+    environment:
+      - NGINX_HOST=nginx
+      - NGINX_PORT=443
+      - NGINX_RAW_PORT=8443

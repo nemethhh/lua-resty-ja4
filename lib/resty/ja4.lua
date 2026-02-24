@@ -45,7 +45,7 @@ local ext_out_ptr = ffi_new("int*[1]")
 local ext_len_ptr = ffi_new("size_t[1]")
 
 local _M = {
-    _VERSION = "0.2.0"
+    _VERSION = "0.1.0"
 }
 
 local _hash_mode = true

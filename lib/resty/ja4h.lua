@@ -19,7 +19,7 @@ local out_buf = ffi_new("uint8_t[4096]")
 local hash_buf = ffi_new("uint8_t[4096]")  -- SHA256 input buffer for hash mode
 
 local _M = {
-    _VERSION = "0.2.0"
+    _VERSION = "0.1.0"
 }
 
 local _hash_mode = true

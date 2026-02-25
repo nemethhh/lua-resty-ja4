@@ -420,6 +420,59 @@ function _M.parse_cookies(cookie_str)
     return names, pairs_list
 end
 
+-- Like parse_cookies but fills pre-allocated tables instead of allocating new ones.
+-- Nils out stale entries from previous calls. Returns count.
+function _M.parse_cookies_into(cookie_str, names, pairs_list)
+    if not cookie_str or cookie_str == "" then
+        for i = 1, #names do names[i] = nil end
+        for i = 1, #pairs_list do pairs_list[i] = nil end
+        return 0
+    end
+
+    local n = 0
+    local len = #cookie_str
+    local pos = 1
+
+    while pos <= len do
+        while pos <= len and byte(cookie_str, pos) == 0x20 do
+            pos = pos + 1
+        end
+        if pos > len then break end
+
+        local semi = str_find(cookie_str, "; ", pos, true)
+        local seg_end = semi and (semi - 1) or len
+
+        while seg_end >= pos and byte(cookie_str, seg_end) == 0x20 do
+            seg_end = seg_end - 1
+        end
+
+        if seg_end >= pos then
+            local eq = str_find(cookie_str, "=", pos, true)
+            if eq and eq <= seg_end then
+                local name_end = eq - 1
+                while name_end >= pos and byte(cookie_str, name_end) == 0x20 do
+                    name_end = name_end - 1
+                end
+                if name_end >= pos then
+                    n = n + 1
+                    names[n] = str_sub(cookie_str, pos, name_end)
+                    pairs_list[n] = str_sub(cookie_str, pos, seg_end)
+                end
+            end
+        end
+
+        pos = semi and (semi + 2) or (len + 1)
+    end
+
+    -- Clear stale entries from previous calls
+    local old_len = #names
+    for i = n + 1, old_len do names[i] = nil end
+    old_len = #pairs_list
+    for i = n + 1, old_len do pairs_list[i] = nil end
+
+    return n
+end
+
 -- Parse raw header block, extract header names in order.
 -- PRESERVES ORIGINAL CASE for hashing (JA4H spec requires original case).
 -- Excludes Cookie and Referer (case-insensitive check).
@@ -468,6 +521,55 @@ function _M.parse_raw_header_names(raw)
     end
 
     return names, n
+end
+
+-- Like parse_raw_header_names but fills pre-allocated table instead of allocating.
+-- Nils out stale entries from previous calls. Returns count.
+function _M.parse_raw_header_names_into(raw, names)
+    if not raw or raw == "" then
+        for i = 1, #names do names[i] = nil end
+        return 0
+    end
+
+    local n = 0
+    local pos = 1
+    local len = #raw
+
+    while pos <= len do
+        local cr = str_find(raw, "\r\n", pos, true)
+        if not cr or cr == pos then
+            break
+        end
+
+        local colon = str_find(raw, ":", pos, true)
+        if colon and colon < cr then
+            local name_len = colon - pos
+            local skip = false
+            if name_len == 6 then
+                local b = byte(raw, pos)
+                if b == 0x43 or b == 0x63 then
+                    skip = (str_lower(str_sub(raw, pos, colon - 1)) == "cookie")
+                end
+            elseif name_len == 7 then
+                local b = byte(raw, pos)
+                if b == 0x52 or b == 0x72 then
+                    skip = (str_lower(str_sub(raw, pos, colon - 1)) == "referer")
+                end
+            end
+            if not skip then
+                n = n + 1
+                names[n] = str_sub(raw, pos, colon - 1)
+            end
+        end
+
+        pos = cr + 2
+    end
+
+    -- Clear stale entries
+    local old_len = #names
+    for i = n + 1, old_len do names[i] = nil end
+
+    return n
 end
 
 -- Parse Accept-Language header value.

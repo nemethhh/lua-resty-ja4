@@ -10,18 +10,18 @@ local tonumber = tonumber
 local math_min = math.min
 local utils = require "resty.ja4.utils"
 local new_tab = utils.new_tab
-local isort = utils.isort
+local isort_u16 = utils.isort_u16
 local is_grease = utils.is_grease
 local LEGACY_VERSION_MAP = utils.LEGACY_VERSION_MAP
 local csv_buf = utils.csv_buf
-local write_hex4_csv = utils.write_hex4_csv
+local write_u16_hex_csv = utils.write_u16_hex_csv
 local append_hex4_csv = utils.append_hex4_csv
 local sha256_to_buf = utils.sha256_to_buf
 local EMPTY_HASH = utils.EMPTY_HASH
 local NUM2 = utils.NUM2
 
-local cipher_hexes = new_tab(40, 0)
-local ext_hexes = new_tab(30, 0)
+local cipher_u16 = ffi_new("uint16_t[100]")
+local ext_u16 = ffi_new("uint16_t[100]")
 -- Raw mode worst case: 10 (section_a) + 1 + 494 (99 ciphers) + 1 + 494 (99 exts)
 -- + 1 + ~200 (sig_algs) ≈ 1200B. Hash mode: fixed 36B. 2048B covers all cases.
 local out_buf = ffi_new("uint8_t[2048]")
@@ -56,26 +56,25 @@ function _M.configure(opts)
     end
 end
 
--- Fill buffer with hex-encoded cipher values. Returns count.
+-- Copy cipher uint16 values from Lua table to FFI array.
 -- Separate function gives JIT a clean trace boundary.
-local function fill_cipher_hexes(ciphers, buf)
+local function copy_ciphers(ciphers, arr)
     local n = #ciphers
     for i = 1, n do
-        buf[i] = utils.to_hex4(ciphers[i])
+        arr[i - 1] = ciphers[i]
     end
     return n
 end
 
--- Filter extensions into buffer, excluding SNI (0x0000) and ALPN (0x0010).
--- Returns count. Separate function eliminates JIT abort
--- ("leaving loop in root trace").
-local function filter_extensions(extensions, buf)
+-- Copy extension uint16 values to FFI array, excluding SNI (0x0000) and ALPN (0x0010).
+-- Separate function eliminates JIT abort ("leaving loop in root trace").
+local function filter_extensions_u16(extensions, arr)
     local n = 0
     for i = 1, #extensions do
         local ext = extensions[i]
         if ext ~= 0x0000 and ext ~= 0x0010 then
+            arr[n] = ext
             n = n + 1
-            buf[n] = utils.to_hex4(ext)
         end
     end
     return n
@@ -151,21 +150,19 @@ function _M.build(data)
     out_buf[10] = 0x5F  -- '_'
     local pos = 11
 
-    -- Sort ciphers and extensions (shared between hash/raw modes)
-    local cn = fill_cipher_hexes(data.ciphers, cipher_hexes)
-    for i = cn + 1, #cipher_hexes do cipher_hexes[i] = nil end
-    isort(cipher_hexes, cn)
+    -- Copy to FFI arrays and sort numerically (fully JIT-inlined)
+    local cn = copy_ciphers(data.ciphers, cipher_u16)
+    isort_u16(cipher_u16, cn)
 
-    local ext_n = filter_extensions(data.extensions, ext_hexes)
-    for i = ext_n + 1, #ext_hexes do ext_hexes[i] = nil end
-    isort(ext_hexes, ext_n)
+    local ext_n = filter_extensions_u16(data.extensions, ext_u16)
+    isort_u16(ext_u16, ext_n)
 
     if _hash_mode then
         -- Section B: sorted ciphers -> csv_buf -> SHA256 -> 12 hex bytes to out_buf
         if cn == 0 then
             ffi_copy(out_buf + pos, EMPTY_HASH, 12)
         else
-            local csv_len = write_hex4_csv(cipher_hexes, cn)
+            local csv_len = write_u16_hex_csv(cipher_u16, cn, csv_buf, 0)
             sha256_to_buf(csv_buf, csv_len, out_buf, pos)
         end
         pos = pos + 12  -- 23
@@ -173,8 +170,7 @@ function _M.build(data)
         out_buf[pos] = 0x5F; pos = pos + 1  -- 24
 
         -- Section C: sorted exts + sig_algs -> csv_buf -> SHA256 -> 12 hex bytes
-        local ext_csv_len = write_hex4_csv(ext_hexes, ext_n)
-        local sc_len = ext_csv_len
+        local sc_len = write_u16_hex_csv(ext_u16, ext_n, csv_buf, 0)
         if data.sig_algs and #data.sig_algs > 0 then
             csv_buf[sc_len] = 0x5F  -- '_'
             sc_len = append_hex4_csv(data.sig_algs, #data.sig_algs, sc_len + 1)
@@ -187,12 +183,12 @@ function _M.build(data)
         pos = pos + 12  -- 36
     else
         -- Section B raw: hex CSV directly into out_buf
-        pos = utils.write_hex4_csv_at(cipher_hexes, cn, out_buf, pos)
+        pos = write_u16_hex_csv(cipher_u16, cn, out_buf, pos)
 
         out_buf[pos] = 0x5F; pos = pos + 1
 
         -- Section C raw: exts CSV + '_' + sig_algs CSV
-        pos = utils.write_hex4_csv_at(ext_hexes, ext_n, out_buf, pos)
+        pos = write_u16_hex_csv(ext_u16, ext_n, out_buf, pos)
         if data.sig_algs and #data.sig_algs > 0 then
             out_buf[pos] = 0x5F; pos = pos + 1
             pos = utils.write_hex4_csv_at(data.sig_algs, #data.sig_algs, out_buf, pos)

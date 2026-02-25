@@ -2,7 +2,7 @@ use Test::Nginx::Socket::Lua;
 use Cwd qw(cwd);
 
 repeat_each(1);
-plan tests => repeat_each() * 2 * 33;
+plan tests => repeat_each() * 2 * 37;
 
 no_shuffle();
 
@@ -527,3 +527,118 @@ local utils = require "resty.ja4.utils"
 ngx.say(utils.parse_accept_language("ast"))
 --- response_body
 ast0
+
+=== TEST 34: isort_u16 sorts FFI uint16 array (matches hex string sort)
+--- http_config eval: $::HttpConfig
+--- lua_code
+local ffi = require "ffi"
+local utils = require "resty.ja4.utils"
+-- Same values as TEST 13 string sort: c02b, 002f, 1301, 0035, cca9
+local arr = ffi.new("uint16_t[5]", 0xc02b, 0x002f, 0x1301, 0x0035, 0xcca9)
+utils.isort_u16(arr, 5)
+local result = {}
+for i = 0, 4 do result[i+1] = utils.to_hex4(arr[i]) end
+ngx.say("sorted: ", table.concat(result, ","))
+-- Edge cases
+local one = ffi.new("uint16_t[1]", 0x1301)
+utils.isort_u16(one, 1)
+ngx.say("one: ", utils.to_hex4(one[0]))
+utils.isort_u16(one, 0)
+ngx.say("empty: ok")
+-- Already sorted
+local pre = ffi.new("uint16_t[3]", 0x0001, 0x0002, 0x0003)
+utils.isort_u16(pre, 3)
+ngx.say("pre: ", utils.to_hex4(pre[0]), ",", utils.to_hex4(pre[1]), ",", utils.to_hex4(pre[2]))
+--- response_body
+sorted: 002f,0035,1301,c02b,cca9
+one: 1301
+empty: ok
+pre: 0001,0002,0003
+
+=== TEST 35: write_u16_hex_csv matches write_hex4_csv output
+--- http_config eval: $::HttpConfig
+--- lua_code
+local ffi = require "ffi"
+local utils = require "resty.ja4.utils"
+local buf = ffi.new("uint8_t[256]")
+-- Compare: new uint16 path vs old hex string path
+local arr = ffi.new("uint16_t[5]", 0x002f, 0x0035, 0x009c, 0x1301, 0x1302)
+local pos = utils.write_u16_hex_csv(arr, 5, buf, 0)
+local new_result = ffi.string(buf, pos)
+local hexes = {"002f", "0035", "009c", "1301", "1302"}
+local len = utils.write_hex4_csv(hexes, 5)
+local old_result = ffi.string(utils.csv_buf, len)
+ngx.say("match: ", new_result == old_result and "yes" or "no")
+ngx.say("value: ", new_result)
+-- Single element
+pos = utils.write_u16_hex_csv(ffi.new("uint16_t[1]", 0xcca9), 1, buf, 0)
+ngx.say("single: ", ffi.string(buf, pos))
+-- Empty
+pos = utils.write_u16_hex_csv(arr, 0, buf, 5)
+ngx.say("empty_pos: ", pos)
+-- At offset
+pos = utils.write_u16_hex_csv(ffi.new("uint16_t[2]", 0x000a, 0x000d), 2, buf, 10)
+ngx.say("offset: ", ffi.string(buf + 10, pos - 10))
+--- response_body
+match: yes
+value: 002f,0035,009c,1301,1302
+single: cca9
+empty_pos: 5
+offset: 000a,000d
+
+=== TEST 36: parse_cookies_into fills pre-allocated tables
+--- http_config eval: $::HttpConfig
+--- lua_code
+local utils = require "resty.ja4.utils"
+-- Pre-allocate tables
+local names = {}
+local pairs_list = {}
+-- First call
+local n = utils.parse_cookies_into("session=abc123; user=john; theme=dark", names, pairs_list)
+ngx.say("count: ", n)
+table.sort(names)
+table.sort(pairs_list)
+ngx.say("names: ", table.concat(names, ","))
+ngx.say("pairs: ", table.concat(pairs_list, ","))
+-- Second call with fewer cookies (verifies stale entry cleanup)
+n = utils.parse_cookies_into("a=1", names, pairs_list)
+ngx.say("count2: ", n)
+ngx.say("len: ", #names)
+ngx.say("name2: ", names[1])
+-- nil/empty input
+n = utils.parse_cookies_into(nil, names, pairs_list)
+ngx.say("nil: ", n)
+n = utils.parse_cookies_into("", names, pairs_list)
+ngx.say("empty: ", n)
+--- response_body
+count: 3
+names: session,theme,user
+pairs: session=abc123,theme=dark,user=john
+count2: 1
+len: 1
+name2: a
+nil: 0
+empty: 0
+
+=== TEST 37: parse_raw_header_names_into fills pre-allocated table
+--- http_config eval: $::HttpConfig
+--- lua_code
+local utils = require "resty.ja4.utils"
+local names = {}
+local raw = "Host: example.com\r\nCookie: a=1\r\nUser-Agent: Mozilla\r\nReferer: http://x.com\r\nAccept: */*\r\n\r\n"
+local n = utils.parse_raw_header_names_into(raw, names)
+ngx.say("count: ", n)
+ngx.say("names: ", table.concat(names, ",", 1, n))
+-- Second call with fewer headers (stale cleanup)
+n = utils.parse_raw_header_names_into("Host: x\r\n\r\n", names)
+ngx.say("count2: ", n)
+ngx.say("len: ", #names)
+-- nil/empty
+n = utils.parse_raw_header_names_into(nil, names)
+ngx.say("nil: ", n)
+--- response_body
+count: 3
+names: Host,User-Agent,Accept
+count2: 1
+len: 1
+nil: 0

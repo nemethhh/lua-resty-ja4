@@ -175,6 +175,22 @@ local function isort(t, n)
 end
 _M.isort = isort
 
+-- 0-based insertion sort for FFI uint16_t arrays.
+-- Pure numeric comparison — fully JIT-inlined (single cmp instruction),
+-- unlike isort's string comparison which calls lj_str_cmp (C function, breaks traces).
+local function isort_u16(arr, n)
+    for i = 1, n - 1 do
+        local val = arr[i]
+        local j = i - 1
+        while j >= 0 and arr[j] > val do
+            arr[j + 1] = arr[j]
+            j = j - 1
+        end
+        arr[j + 1] = val
+    end
+end
+_M.isort_u16 = isort_u16
+
 -- Write array of 4-char hex strings as comma-separated values into csv_buf.
 -- Returns: byte count written. Caller reads csv_buf[0..len-1].
 local function write_hex4_csv(hex_array, n)
@@ -236,6 +252,29 @@ local function write_hex4_csv_at(hex_array, n, buf, pos)
     return pos
 end
 _M.write_hex4_csv_at = write_hex4_csv_at
+
+-- Write uint16 FFI array as comma-separated 4-char hex into buf at offset.
+-- Converts each value to hex via nibble extraction from hex_chars[].
+-- No HEX4 table lookup, no intermediate strings, no byte() calls.
+-- Returns: new offset after last byte written.
+local function write_u16_hex_csv(arr, n, buf, offset)
+    if n == 0 then return offset end
+    local pos = offset
+    for i = 0, n - 1 do
+        if i > 0 then
+            buf[pos] = 0x2C  -- ','
+            pos = pos + 1
+        end
+        local val = arr[i]
+        buf[pos]     = hex_chars[rshift(val, 12)]
+        buf[pos + 1] = hex_chars[band(rshift(val, 8), 0x0f)]
+        buf[pos + 2] = hex_chars[band(rshift(val, 4), 0x0f)]
+        buf[pos + 3] = hex_chars[band(val, 0x0f)]
+        pos = pos + 4
+    end
+    return pos
+end
+_M.write_u16_hex_csv = write_u16_hex_csv
 
 -- Write array of variable-length Lua strings as CSV into buffer at pos.
 -- Returns: new pos after last byte written.
@@ -381,6 +420,59 @@ function _M.parse_cookies(cookie_str)
     return names, pairs_list
 end
 
+-- Like parse_cookies but fills pre-allocated tables instead of allocating new ones.
+-- Nils out stale entries from previous calls. Returns count.
+function _M.parse_cookies_into(cookie_str, names, pairs_list)
+    if not cookie_str or cookie_str == "" then
+        for i = 1, #names do names[i] = nil end
+        for i = 1, #pairs_list do pairs_list[i] = nil end
+        return 0
+    end
+
+    local n = 0
+    local len = #cookie_str
+    local pos = 1
+
+    while pos <= len do
+        while pos <= len and byte(cookie_str, pos) == 0x20 do
+            pos = pos + 1
+        end
+        if pos > len then break end
+
+        local semi = str_find(cookie_str, "; ", pos, true)
+        local seg_end = semi and (semi - 1) or len
+
+        while seg_end >= pos and byte(cookie_str, seg_end) == 0x20 do
+            seg_end = seg_end - 1
+        end
+
+        if seg_end >= pos then
+            local eq = str_find(cookie_str, "=", pos, true)
+            if eq and eq <= seg_end then
+                local name_end = eq - 1
+                while name_end >= pos and byte(cookie_str, name_end) == 0x20 do
+                    name_end = name_end - 1
+                end
+                if name_end >= pos then
+                    n = n + 1
+                    names[n] = str_sub(cookie_str, pos, name_end)
+                    pairs_list[n] = str_sub(cookie_str, pos, seg_end)
+                end
+            end
+        end
+
+        pos = semi and (semi + 2) or (len + 1)
+    end
+
+    -- Clear stale entries from previous calls
+    local old_len = #names
+    for i = n + 1, old_len do names[i] = nil end
+    old_len = #pairs_list
+    for i = n + 1, old_len do pairs_list[i] = nil end
+
+    return n
+end
+
 -- Parse raw header block, extract header names in order.
 -- PRESERVES ORIGINAL CASE for hashing (JA4H spec requires original case).
 -- Excludes Cookie and Referer (case-insensitive check).
@@ -429,6 +521,55 @@ function _M.parse_raw_header_names(raw)
     end
 
     return names, n
+end
+
+-- Like parse_raw_header_names but fills pre-allocated table instead of allocating.
+-- Nils out stale entries from previous calls. Returns count.
+function _M.parse_raw_header_names_into(raw, names)
+    if not raw or raw == "" then
+        for i = 1, #names do names[i] = nil end
+        return 0
+    end
+
+    local n = 0
+    local pos = 1
+    local len = #raw
+
+    while pos <= len do
+        local cr = str_find(raw, "\r\n", pos, true)
+        if not cr or cr == pos then
+            break
+        end
+
+        local colon = str_find(raw, ":", pos, true)
+        if colon and colon < cr then
+            local name_len = colon - pos
+            local skip = false
+            if name_len == 6 then
+                local b = byte(raw, pos)
+                if b == 0x43 or b == 0x63 then
+                    skip = (str_lower(str_sub(raw, pos, colon - 1)) == "cookie")
+                end
+            elseif name_len == 7 then
+                local b = byte(raw, pos)
+                if b == 0x52 or b == 0x72 then
+                    skip = (str_lower(str_sub(raw, pos, colon - 1)) == "referer")
+                end
+            end
+            if not skip then
+                n = n + 1
+                names[n] = str_sub(raw, pos, colon - 1)
+            end
+        end
+
+        pos = cr + 2
+    end
+
+    -- Clear stale entries
+    local old_len = #names
+    for i = n + 1, old_len do names[i] = nil end
+
+    return n
 end
 
 -- Parse Accept-Language header value.

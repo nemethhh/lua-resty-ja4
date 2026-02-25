@@ -15,6 +15,9 @@ local write_str_csv_at = utils.write_str_csv_at
 local NUM2 = utils.NUM2
 local ngx = ngx
 
+local _cookie_names = new_tab(100, 0)
+local _cookie_pairs = new_tab(100, 0)
+
 local out_buf = ffi_new("uint8_t[4096]")
 local hash_buf = ffi_new("uint8_t[4096]")  -- SHA256 input buffer for hash mode
 
@@ -95,19 +98,19 @@ function _M.build(data)
 
         -- Sections C/D: cookie names and pairs
         if data.cookie_str and data.cookie_str ~= "" then
-            local names, pairs_list = utils.parse_cookies(data.cookie_str)
-            if names and #names > 0 then
-                -- Section C: sorted cookie names → hash
-                isort(names, #names)
-                local nlen = write_str_csv_at(names, #names, hash_buf, 0)
+            local cn = utils.parse_cookies_into(data.cookie_str, _cookie_names, _cookie_pairs)
+            if cn > 0 then
+                -- Section C: sorted cookie names -> hash
+                isort(_cookie_names, cn)
+                local nlen = write_str_csv_at(_cookie_names, cn, hash_buf, 0)
                 sha256_to_buf(hash_buf, nlen, out_buf, pos)
                 pos = pos + 12
 
                 out_buf[pos] = 0x5F; pos = pos + 1
 
-                -- Section D: sorted cookie pairs → hash
-                isort(pairs_list, #pairs_list)
-                local plen = write_str_csv_at(pairs_list, #pairs_list, hash_buf, 0)
+                -- Section D: sorted cookie pairs -> hash
+                isort(_cookie_pairs, cn)
+                local plen = write_str_csv_at(_cookie_pairs, cn, hash_buf, 0)
                 sha256_to_buf(hash_buf, plen, out_buf, pos)
                 pos = pos + 12
             else
@@ -132,15 +135,15 @@ function _M.build(data)
 
         -- Sections C/D raw: sorted cookie names, sorted cookie pairs
         if data.cookie_str and data.cookie_str ~= "" then
-            local names, pairs_list = utils.parse_cookies(data.cookie_str)
-            if names and #names > 0 then
-                isort(names, #names)
-                pos = write_str_csv_at(names, #names, out_buf, pos)
+            local cn = utils.parse_cookies_into(data.cookie_str, _cookie_names, _cookie_pairs)
+            if cn > 0 then
+                isort(_cookie_names, cn)
+                pos = write_str_csv_at(_cookie_names, cn, out_buf, pos)
 
                 out_buf[pos] = 0x5F; pos = pos + 1
 
-                isort(pairs_list, #pairs_list)
-                pos = write_str_csv_at(pairs_list, #pairs_list, out_buf, pos)
+                isort(_cookie_pairs, cn)
+                pos = write_str_csv_at(_cookie_pairs, cn, out_buf, pos)
             else
                 -- Empty section C, separator, empty section D
                 out_buf[pos] = 0x5F; pos = pos + 1

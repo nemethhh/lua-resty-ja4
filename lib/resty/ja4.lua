@@ -20,8 +20,8 @@ local sha256_to_buf = utils.sha256_to_buf
 local EMPTY_HASH = utils.EMPTY_HASH
 local NUM2 = utils.NUM2
 
-local cipher_u16 = ffi_new("uint16_t[100]")
-local ext_u16 = ffi_new("uint16_t[100]")
+local cipher_u16 = ffi_new("uint16_t[256]")
+local ext_u16 = ffi_new("uint16_t[256]")
 -- Raw mode worst case: 10 (section_a) + 1 + 494 (99 ciphers) + 1 + 494 (99 exts)
 -- + 1 + ~200 (sig_algs) ≈ 1200B. Hash mode: fixed 36B. 2048B covers all cases.
 local out_buf = ffi_new("uint8_t[2048]")

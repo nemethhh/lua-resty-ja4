@@ -175,6 +175,22 @@ local function isort(t, n)
 end
 _M.isort = isort
 
+-- 0-based insertion sort for FFI uint16_t arrays.
+-- Pure numeric comparison — fully JIT-inlined (single cmp instruction),
+-- unlike isort's string comparison which calls lj_str_cmp (C function, breaks traces).
+local function isort_u16(arr, n)
+    for i = 1, n - 1 do
+        local val = arr[i]
+        local j = i - 1
+        while j >= 0 and arr[j] > val do
+            arr[j + 1] = arr[j]
+            j = j - 1
+        end
+        arr[j + 1] = val
+    end
+end
+_M.isort_u16 = isort_u16
+
 -- Write array of 4-char hex strings as comma-separated values into csv_buf.
 -- Returns: byte count written. Caller reads csv_buf[0..len-1].
 local function write_hex4_csv(hex_array, n)
@@ -236,6 +252,29 @@ local function write_hex4_csv_at(hex_array, n, buf, pos)
     return pos
 end
 _M.write_hex4_csv_at = write_hex4_csv_at
+
+-- Write uint16 FFI array as comma-separated 4-char hex into buf at offset.
+-- Converts each value to hex via nibble extraction from hex_chars[].
+-- No HEX4 table lookup, no intermediate strings, no byte() calls.
+-- Returns: new offset after last byte written.
+local function write_u16_hex_csv(arr, n, buf, offset)
+    if n == 0 then return offset end
+    local pos = offset
+    for i = 0, n - 1 do
+        if i > 0 then
+            buf[pos] = 0x2C  -- ','
+            pos = pos + 1
+        end
+        local val = arr[i]
+        buf[pos]     = hex_chars[rshift(val, 12)]
+        buf[pos + 1] = hex_chars[band(rshift(val, 8), 0x0f)]
+        buf[pos + 2] = hex_chars[band(rshift(val, 4), 0x0f)]
+        buf[pos + 3] = hex_chars[band(val, 0x0f)]
+        pos = pos + 4
+    end
+    return pos
+end
+_M.write_u16_hex_csv = write_u16_hex_csv
 
 -- Write array of variable-length Lua strings as CSV into buffer at pos.
 -- Returns: new pos after last byte written.

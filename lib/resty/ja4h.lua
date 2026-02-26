@@ -18,6 +18,7 @@ local table_elt_ct = ffi.typeof("ngx_http_lua_ffi_table_elt_t[?]")
 local MAX_HDR = 100
 local _hdr_buf = ffi_new(table_elt_ct, MAX_HDR)
 local _hdr_truncated = ffi_new("int[1]")
+local _ck_join = ffi_new("uint8_t[4096]")
 
 local new_tab = utils.new_tab
 local EMPTY_HASH = utils.EMPTY_HASH
@@ -82,7 +83,10 @@ local function get_headers_ffi()
         buf = ffi_new(table_elt_ct, n)
     end
 
-    C.ngx_http_lua_ffi_req_get_headers(r, buf, n, 1)  -- raw=1: preserve original case
+    local rc = C.ngx_http_lua_ffi_req_get_headers(r, buf, n, 1)  -- raw=1: preserve original case
+    if rc ~= 0 then
+        return {}, 0, false, false, nil, nil
+    end
 
     local names = new_tab(n, 0)
     local name_count = 0
@@ -124,6 +128,26 @@ local function get_headers_ffi()
     end
 
     return names, name_count, has_cookie, has_referer, cookie_values, accept_lang
+end
+
+-- Join multiple cookie values with "; " via FFI buffer (one allocation).
+-- HTTP/2 may send separate cookie: headers instead of one semicolon-separated value.
+local function join_cookie_values(values, count)
+    if not values or count == 0 then return nil end
+    if count == 1 then return values[1] end
+    local pos = 0
+    for i = 1, count do
+        if i > 1 then
+            _ck_join[pos] = 0x3B      -- ';'
+            _ck_join[pos + 1] = 0x20  -- ' '
+            pos = pos + 2
+        end
+        local s = values[i]
+        local slen = #s
+        ffi_copy(_ck_join + pos, s, slen)
+        pos = pos + slen
+    end
+    return ffi_string(_ck_join, pos)
 end
 
 -- Build JA4H fingerprint from pre-extracted data.
@@ -269,23 +293,17 @@ local function get_http_version()
     return "00"
 end
 
--- Compute JA4H from current HTTP request context.
--- Returns: fingerprint string (or nil, err)
-function _M.compute()
-    local req = ngx.req
-    local method = req.get_method()
+-- Internal: compute via FFI path (used for HTTP/2+, exposed for testing)
+local function compute_ffi_path()
+    local method = ngx.req.get_method()
     local version = get_http_version()
 
-    local raw_header = req.raw_header(true)
-    local header_names, header_count = utils.parse_raw_header_names(raw_header)
+    local header_names, header_count, has_cookie, has_referer,
+          cookie_values, accept_language = get_headers_ffi()
 
-    local headers = req.get_headers(100)
-    local has_cookie = headers["cookie"] ~= nil
-    local has_referer = headers["referer"] ~= nil
-    local accept_language = headers["accept-language"]
-    local cookie_str = headers["cookie"]
+    local cookie_str = join_cookie_values(cookie_values, cookie_values and #cookie_values or 0)
 
-    local result = _M.build({
+    return _M.build({
         method          = method,
         version         = version,
         has_cookie      = has_cookie,
@@ -294,6 +312,37 @@ function _M.compute()
         accept_language = accept_language,
         cookie_str      = cookie_str,
     })
+end
+
+_M._compute_ffi_path = compute_ffi_path
+
+-- Compute JA4H from current HTTP request context.
+-- Dual-path: raw_header() for HTTP/1.x, FFI for HTTP/2+.
+-- Returns: fingerprint string (or nil, err)
+function _M.compute()
+    local version = get_http_version()
+    local result
+
+    if version == "20" or version == "30" then
+        result = compute_ffi_path()
+    else
+        -- HTTP/1.x path (unchanged)
+        local req = ngx.req
+        local method = req.get_method()
+        local raw_header = req.raw_header(true)
+        local header_names, header_count = utils.parse_raw_header_names(raw_header)
+        local headers = req.get_headers(100)
+
+        result = _M.build({
+            method          = method,
+            version         = version,
+            has_cookie      = headers["cookie"] ~= nil,
+            has_referer     = headers["referer"] ~= nil,
+            header_names    = header_names,
+            accept_language = headers["accept-language"],
+            cookie_str      = headers["cookie"],
+        })
+    end
 
     _M.store(result)
     return result

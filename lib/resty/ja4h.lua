@@ -7,6 +7,18 @@ local str_lower = string.lower
 local str_sub = string.sub
 local math_min = math.min
 local utils = require "resty.ja4.utils"
+
+-- FFI header extraction for HTTP/2+ (reads headers_in via lua-resty-core FFI)
+local base = require "resty.core.base"
+local get_request = base.get_request
+require "resty.core.request"  -- ensures header FFI types are cdef'd
+
+local C = ffi.C
+local table_elt_ct = ffi.typeof("ngx_http_lua_ffi_table_elt_t[?]")
+local MAX_HDR = 100
+local _hdr_buf = ffi_new(table_elt_ct, MAX_HDR)
+local _hdr_truncated = ffi_new("int[1]")
+
 local new_tab = utils.new_tab
 local EMPTY_HASH = utils.EMPTY_HASH
 local isort = utils.isort
@@ -39,6 +51,80 @@ local METHOD_CODE = {
     PATCH = "pa", HEAD = "he", OPTIONS = "op", CONNECT = "co",
     TRACE = "tr",
 }
+
+-- Case-insensitive byte match: compare FFI char* against Lua string (lowercase expected)
+local function match_header(data, expected, len)
+    for j = 0, len - 1 do
+        local b = data[j]
+        if b >= 0x41 and b <= 0x5A then b = b + 32 end  -- fold to lowercase
+        if b ~= byte(expected, j + 1) then return false end
+    end
+    return true
+end
+
+-- Extract headers in order via FFI. Works for all HTTP versions.
+-- Returns: names[], count, has_cookie, has_referer, cookie_values[], accept_lang
+local function get_headers_ffi()
+    local r = get_request()
+    if not r then
+        return {}, 0, false, false, nil, nil
+    end
+
+    local n = C.ngx_http_lua_ffi_req_get_headers_count(r, MAX_HDR, _hdr_truncated)
+    if n <= 0 then
+        return {}, 0, false, false, nil, nil
+    end
+
+    local buf
+    if n <= MAX_HDR then
+        buf = _hdr_buf
+    else
+        buf = ffi_new(table_elt_ct, n)
+    end
+
+    C.ngx_http_lua_ffi_req_get_headers(r, buf, n, 1)  -- raw=1: preserve original case
+
+    local names = new_tab(n, 0)
+    local name_count = 0
+    local has_cookie = false
+    local has_referer = false
+    local cookie_values = nil
+    local cookie_count = 0
+    local accept_lang = nil
+
+    for i = 0, n - 1 do
+        local key_len = buf[i].key.len
+        local key_data = buf[i].key.data
+
+        if key_len == 6 and (key_data[0] == 0x43 or key_data[0] == 0x63) then
+            if match_header(key_data, "cookie", 6) then
+                has_cookie = true
+                if not cookie_values then cookie_values = new_tab(4, 0) end
+                cookie_count = cookie_count + 1
+                cookie_values[cookie_count] = ffi_string(buf[i].value.data, buf[i].value.len)
+            else
+                name_count = name_count + 1
+                names[name_count] = ffi_string(key_data, key_len)
+            end
+        elseif key_len == 7 and (key_data[0] == 0x52 or key_data[0] == 0x72) then
+            if match_header(key_data, "referer", 7) then
+                has_referer = true
+            else
+                name_count = name_count + 1
+                names[name_count] = ffi_string(key_data, key_len)
+            end
+        else
+            if key_len == 15 and not accept_lang
+                and match_header(key_data, "accept-language", 15) then
+                accept_lang = ffi_string(buf[i].value.data, buf[i].value.len)
+            end
+            name_count = name_count + 1
+            names[name_count] = ffi_string(key_data, key_len)
+        end
+    end
+
+    return names, name_count, has_cookie, has_referer, cookie_values, accept_lang
+end
 
 -- Build JA4H fingerprint from pre-extracted data.
 -- Input table fields:
@@ -167,6 +253,8 @@ end
 function _M.get()
     return ngx.ctx[CTX_KEY]
 end
+
+_M._get_headers_ffi = get_headers_ffi
 
 -- HTTP version from server_protocol string
 local function get_http_version()

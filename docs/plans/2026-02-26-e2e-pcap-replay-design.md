@@ -10,11 +10,13 @@ hashing → HTTP response header.
 
 ## Approach
 
-**Scapy-based ClientHello reconstruction.** Parse PCAPs offline, extract
-ClientHello parameters (cipher suite IDs, extension type IDs, ALPN, signature
-algorithms, TLS version), reconstruct a new ClientHello with the same "shape"
-but fresh cryptographic material, complete a real TLS handshake with OpenResty,
-and assert the `X-JA4` response header matches the expected fingerprint.
+**Scapy-based ClientHello reconstruction with hardcoded vectors.** PCAP
+parameters (cipher suite IDs, extension type IDs, ALPN, signature algorithms,
+TLS version) are extracted once during planning and hardcoded in the test file.
+At test time, scapy constructs a TLSClientHello with those exact parameters
+(fresh cryptographic material), completes a real TLS handshake with OpenResty,
+and asserts the `X-JA4` response header matches the expected fingerprint.
+No PCAP files are needed at runtime.
 
 JA4 fingerprints depend only on protocol-level IDs (cipher suite numbers,
 extension type numbers, ALPN string, sig_alg codes, TLS version) — not on
@@ -42,37 +44,22 @@ expected values). Cross-validated against unit tests in `t/005-ja4db-vectors.t`
 
 ```
 e2e/
-├── pcap/                        # copied from docs/ja4/pcap/
-│   ├── tls12.pcap
-│   ├── tls-alpn-h2.pcap
-│   ├── browsers-x509.pcapng
-│   ├── badcurveball.pcap
-│   └── latest.pcapng
-├── pcap_helper.py               # scapy PCAP parsing + ClientHello replay
-├── test_ja4_pcap.py             # pytest parametrized test cases
+├── scapy_tls_client.py          # scapy TLS client helper (connect_and_get_ja4)
+├── test_ja4_pcap.py             # pytest parametrized test cases (hardcoded vectors)
 ├── Dockerfile.tests             # add scapy + cryptography deps
-├── conftest.py                  # existing (may add pcap fixtures)
+├── conftest.py                  # existing (unchanged)
 └── ...                          # existing files unchanged
 ```
 
 ## Test Architecture
 
-### pcap_helper.py
+### scapy_tls_client.py
 
-Two responsibilities:
+Single function: **`connect_and_get_ja4(host, port, ciphers, ext_types, alpn, sig_algs)`**
 
-1. **`extract_client_hellos(pcap_path)`** — Parse PCAP with `rdpcap()`, filter
-   packets with `TLSClientHello` layer, return list of
-   `(tcp_stream_key, client_hello_layer)` tuples. TCP stream key is
-   `(src_ip, dst_ip, src_port, dst_port)` for matching against expected values.
-
-2. **`replay_client_hello(host, port, client_hello)`** — Reconstruct a
-   `TLSClientHello` with the same cipher suites, extension types, ALPN,
-   signature algorithms, and TLS version. Use scapy's `TLSClientAutomaton` (or
-   manual socket-level TLS if the automaton doesn't support custom ClientHello
-   injection) to complete a handshake with OpenResty. Send
-   `GET / HTTP/1.1\r\nHost: localhost\r\n\r\n`, parse the response, return the
-   `X-JA4` header value.
+Maps extension type IDs to scapy extension objects, constructs a TLSClientHello,
+uses `TLSClientAutomaton` to complete the handshake, sends HTTP GET, parses the
+response, and returns the `X-JA4` header value.
 
 ### test_ja4_pcap.py
 

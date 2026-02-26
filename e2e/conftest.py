@@ -2,6 +2,7 @@ import os
 import ssl
 import http.client
 
+import httpx
 import pytest
 
 
@@ -68,4 +69,33 @@ def raw_request():
     """Make a request to the raw-mode server (port 8443)."""
     def _request(path="/", method="GET", headers=None, ctx=None):
         return make_request(RAW_PORT, path, method, headers, ctx)
+    return _request
+
+
+H2_HASH_PORT = HASH_PORT
+H2_RAW_PORT = RAW_PORT
+
+
+def make_h2_request(port, path="/", method="GET", headers=None):
+    """Make an HTTP/2 request and return (response_headers_dict, body_bytes)."""
+    url = f"https://{NGINX_HOST}:{port}{path}"
+    with httpx.Client(http2=True, verify=False) as client:
+        resp = client.request(method, url, headers=headers or {})
+        resp_headers = {k.lower(): v for k, v in resp.headers.items()}
+        return resp_headers, resp.content
+
+
+@pytest.fixture
+def h2_hash_request():
+    """Make an HTTP/2 request to the hash-mode server (port 443)."""
+    def _request(path="/", method="GET", headers=None):
+        return make_h2_request(H2_HASH_PORT, path, method, headers)
+    return _request
+
+
+@pytest.fixture
+def h2_raw_request():
+    """Make an HTTP/2 request to the raw-mode server (port 8443)."""
+    def _request(path="/", method="GET", headers=None):
+        return make_h2_request(H2_RAW_PORT, path, method, headers)
     return _request

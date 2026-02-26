@@ -132,18 +132,22 @@ end
 
 -- Join multiple cookie values with "; " via FFI buffer (one allocation).
 -- HTTP/2 may send separate cookie: headers instead of one semicolon-separated value.
+local CK_JOIN_SIZE = 4096
+
 local function join_cookie_values(values, count)
     if not values or count == 0 then return nil end
     if count == 1 then return values[1] end
     local pos = 0
     for i = 1, count do
         if i > 1 then
+            if pos + 2 > CK_JOIN_SIZE then break end
             _ck_join[pos] = 0x3B      -- ';'
             _ck_join[pos + 1] = 0x20  -- ' '
             pos = pos + 2
         end
         local s = values[i]
         local slen = #s
+        if pos + slen > CK_JOIN_SIZE then break end
         ffi_copy(_ck_join + pos, s, slen)
         pos = pos + slen
     end

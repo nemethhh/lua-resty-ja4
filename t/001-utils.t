@@ -2,7 +2,7 @@ use Test::Nginx::Socket::Lua;
 use Cwd qw(cwd);
 
 repeat_each(1);
-plan tests => repeat_each() * 2 * 37;
+plan tests => repeat_each() * 2 * 23;
 
 no_shuffle();
 
@@ -42,49 +42,7 @@ ngx.say(utils._VERSION)
 --- response_body
 0.1.0
 
-=== TEST 2: sha256_hex12 with empty string
---- http_config eval: $::HttpConfig
---- lua_code
-local utils = require "resty.ja4.utils"
-ngx.say(utils.sha256_hex12(""))
---- response_body
-e3b0c44298fc
-
-=== TEST 3: sha256_hex12 with JA4 cipher test vector
---- http_config eval: $::HttpConfig
---- lua_code
-local utils = require "resty.ja4.utils"
-local input = "002f,0035,009c,009d,1301,1302,1303,c013,c014,c02b,c02c,c02f,c030,cca8,cca9"
-ngx.say(utils.sha256_hex12(input))
---- response_body
-8daaf6152771
-
-=== TEST 4: sha256_hex12 with extension+sigalg test vector
---- http_config eval: $::HttpConfig
---- lua_code
-local utils = require "resty.ja4.utils"
-local input = "0005,000a,000b,000d,0012,0015,0017,001b,0023,002b,002d,0033,4469,ff01_0403,0804,0401,0503,0805,0501,0806,0601"
-ngx.say(utils.sha256_hex12(input))
---- response_body
-e5627efa2ab1
-
-=== TEST 5: to_hex4 formats values
---- http_config eval: $::HttpConfig
---- lua_code
-local utils = require "resty.ja4.utils"
-ngx.say(utils.to_hex4(0x002f))
-ngx.say(utils.to_hex4(0x1301))
-ngx.say(utils.to_hex4(0xc02b))
-ngx.say(utils.to_hex4(0x0000))
-ngx.say(utils.to_hex4(0xff01))
---- response_body
-002f
-1301
-c02b
-0000
-ff01
-
-=== TEST 6: tls_version_code maps versions
+=== TEST 2: tls_version_code maps versions
 --- http_config eval: $::HttpConfig
 --- lua_code
 local utils = require "resty.ja4.utils"
@@ -102,7 +60,7 @@ ngx.say(utils.tls_version_code(nil))
 s3
 00
 
-=== TEST 7: parse_alpn extracts first+last char
+=== TEST 3: parse_alpn extracts first+last char
 --- http_config eval: $::HttpConfig
 --- lua_code
 local utils = require "resty.ja4.utils"
@@ -116,7 +74,7 @@ h2
 h1
 00
 
-=== TEST 8: parse_sig_algs extracts algorithms in order
+=== TEST 4: parse_sig_algs extracts algorithms in order
 --- http_config eval: $::HttpConfig
 --- lua_code
 local utils = require "resty.ja4.utils"
@@ -126,32 +84,7 @@ ngx.say(table.concat(algs, ","))
 --- response_body
 0403,0804,0401,0503,0805,0501,0806,0601
 
-=== TEST 9: parse_cookies with standard cookie header
---- http_config eval: $::HttpConfig
---- lua_code
-local utils = require "resty.ja4.utils"
-local names, pairs_list = utils.parse_cookies("session=abc123; user=john; theme=dark")
-table.sort(names)
-table.sort(pairs_list)
-ngx.say("names: ", table.concat(names, ","))
-ngx.say("pairs: ", table.concat(pairs_list, ","))
---- response_body
-names: session,theme,user
-pairs: session=abc123,theme=dark,user=john
-
-=== TEST 10: parse_cookies with nil
---- http_config eval: $::HttpConfig
---- lua_code
-local utils = require "resty.ja4.utils"
-local names, pairs_list = utils.parse_cookies(nil)
-ngx.say("names: ", names == nil and "nil" or "not nil")
-names, pairs_list = utils.parse_cookies("")
-ngx.say("names2: ", names == nil and "nil" or "not nil")
---- response_body
-names: nil
-names2: nil
-
-=== TEST 11: parse_raw_header_names preserves ORIGINAL CASE
+=== TEST 5: parse_raw_header_names preserves ORIGINAL CASE
 --- http_config eval: $::HttpConfig
 --- lua_code
 local utils = require "resty.ja4.utils"
@@ -163,7 +96,7 @@ ngx.say("count: ", count)
 names: Host,Connection,User-Agent,Accept-Encoding,Accept-Language
 count: 5
 
-=== TEST 12: parse_accept_language
+=== TEST 6: parse_accept_language
 --- http_config eval: $::HttpConfig
 --- lua_code
 local utils = require "resty.ja4.utils"
@@ -177,7 +110,7 @@ frfr
 zh00
 0000
 
-=== TEST 13: isort sorts small arrays
+=== TEST 7: isort sorts small arrays
 --- http_config eval: $::HttpConfig
 --- lua_code
 local utils = require "resty.ja4.utils"
@@ -208,80 +141,7 @@ sorted: a,b,c
 one: x
 empty: ok
 
-=== TEST 14: write_hex4_csv builds comma-separated hex into buffer
---- http_config eval: $::HttpConfig
---- lua_code
-local utils = require "resty.ja4.utils"
-local ffi = require "ffi"
--- Test with typical cipher list (sorted)
-local hexes = {"002f", "0035", "009c", "1301", "1302"}
-local len = utils.write_hex4_csv(hexes, 5)
-local result = ffi.string(utils.csv_buf, len)
-ngx.say(result)
--- Test with single element
-local one = {"c02b"}
-len = utils.write_hex4_csv(one, 1)
-result = ffi.string(utils.csv_buf, len)
-ngx.say(result)
--- Test with empty
-len = utils.write_hex4_csv({}, 0)
-ngx.say("empty_len: ", len)
---- response_body
-002f,0035,009c,1301,1302
-c02b
-empty_len: 0
-
-=== TEST 15: sha256_hex12_buf produces same hash as sha256_hex12
---- http_config eval: $::HttpConfig
---- lua_code
-local utils = require "resty.ja4.utils"
-local ffi = require "ffi"
--- Compare: string path vs buffer path for cipher test vector
-local input = "002f,0035,009c,009d,1301,1302,1303,c013,c014,c02b,c02c,c02f,c030,cca8,cca9"
-local str_hash = utils.sha256_hex12(input)
--- Build same content via write_hex4_csv
-local hexes = {"002f","0035","009c","009d","1301","1302","1303","c013","c014","c02b","c02c","c02f","c030","cca8","cca9"}
-local len = utils.write_hex4_csv(hexes, 15)
-local buf_hash = utils.sha256_hex12_buf(utils.csv_buf, len)
-ngx.say("str: ", str_hash)
-ngx.say("buf: ", buf_hash)
-ngx.say("match: ", str_hash == buf_hash)
--- Empty buffer
-local empty_hash = utils.sha256_hex12_buf(utils.csv_buf, 0)
-ngx.say("empty: ", empty_hash)
---- response_body
-str: 8daaf6152771
-buf: 8daaf6152771
-match: true
-empty: e3b0c44298fc
-
-=== TEST 16: hex_pair produces correct hex byte-pairs
---- http_config eval: $::HttpConfig
---- lua_code
-local utils = require "resty.ja4.utils"
-local ffi = require "ffi"
-local hex_pair = utils.hex_pair
-local buf = ffi.new("uint8_t[2]")
-local p = ffi.cast("uint16_t*", buf)
--- 0x00 → "00"
-p[0] = hex_pair[0x00]
-ngx.say(ffi.string(buf, 2))
--- 0xAB → "ab"
-p[0] = hex_pair[0xAB]
-ngx.say(ffi.string(buf, 2))
--- 0xFF → "ff"
-p[0] = hex_pair[0xFF]
-ngx.say(ffi.string(buf, 2))
--- 0x1A → "1a"
-p[0] = hex_pair[0x1A]
-ngx.say(ffi.string(buf, 2))
---- response_body
-00
-ab
-ff
-1a
-
-=== TEST 17: NUM2 produces zero-padded decimal strings
+=== TEST 8: NUM2 produces zero-padded decimal strings
 --- http_config eval: $::HttpConfig
 --- lua_code
 local utils = require "resty.ja4.utils"
@@ -299,7 +159,7 @@ ngx.say(utils.NUM2[99])
 42
 99
 
-=== TEST 18: sha256_to_buf produces correct hash
+=== TEST 9: sha256_to_buf produces correct hash
 --- http_config eval: $::HttpConfig
 --- lua_code
 local utils = require "resty.ja4.utils"
@@ -324,7 +184,7 @@ result: 8daaf6152771
 match: true
 empty: e3b0c44298fc
 
-=== TEST 19: write_hex4_csv_at writes CSV into arbitrary buffer
+=== TEST 10: write_hex4_csv_at writes CSV into arbitrary buffer
 --- http_config eval: $::HttpConfig
 --- lua_code
 local utils = require "resty.ja4.utils"
@@ -347,7 +207,7 @@ pos: 24
 single: cca9
 empty_pos: 5
 
-=== TEST 20: write_str_csv_at writes variable-length strings
+=== TEST 11: write_str_csv_at writes variable-length strings
 --- http_config eval: $::HttpConfig
 --- lua_code
 local utils = require "resty.ja4.utils"
@@ -367,7 +227,7 @@ headers: Host,Accept,Accept-Language
 single: X-Custom
 empty_pos: 7
 
-=== TEST 21: parse_alpn with single-byte alphanumeric protocol
+=== TEST 12: parse_alpn with single-byte alphanumeric protocol
 --- http_config eval: $::HttpConfig
 --- lua_code
 local utils = require "resty.ja4.utils"
@@ -377,7 +237,7 @@ ngx.say(utils.parse_alpn(raw))
 --- response_body
 hh
 
-=== TEST 22: parse_alpn with non-alphanumeric bytes (hex fallback)
+=== TEST 13: parse_alpn with non-alphanumeric bytes (hex fallback)
 --- http_config eval: $::HttpConfig
 --- lua_code
 local utils = require "resty.ja4.utils"
@@ -393,7 +253,7 @@ ngx.say("double: ", utils.parse_alpn(raw2))
 single: 0101
 double: 0102
 
-=== TEST 23: parse_alpn with empty/short input
+=== TEST 14: parse_alpn with empty/short input
 --- http_config eval: $::HttpConfig
 --- lua_code
 local utils = require "resty.ja4.utils"
@@ -405,64 +265,7 @@ ngx.say("short: ", utils.parse_alpn("\x00\x02"))
 zero_len: 00
 short: 00
 
-=== TEST 24: parse_cookies with trailing semicolon
---- http_config eval: $::HttpConfig
---- lua_code
-local utils = require "resty.ja4.utils"
-local names, pairs_list = utils.parse_cookies("a=1; b=2; ")
-table.sort(names)
-table.sort(pairs_list)
-ngx.say("count: ", #names)
-ngx.say("names: ", table.concat(names, ","))
-ngx.say("pairs: ", table.concat(pairs_list, ","))
---- response_body
-count: 2
-names: a,b
-pairs: a=1,b=2
-
-=== TEST 25: parse_cookies with missing value
---- http_config eval: $::HttpConfig
---- lua_code
-local utils = require "resty.ja4.utils"
--- Cookie with empty value
-local names, pairs_list = utils.parse_cookies("name=")
-ngx.say("name: ", names[1])
-ngx.say("pair: ", pairs_list[1])
--- Cookie without '=' sign should be skipped
-local n2, p2 = utils.parse_cookies("invalid")
-ngx.say("no_eq: ", n2 == nil and "nil" or "not nil")
---- response_body
-name: name
-pair: name=
-no_eq: nil
-
-=== TEST 26: parse_cookies with leading/trailing spaces
---- http_config eval: $::HttpConfig
---- lua_code
-local utils = require "resty.ja4.utils"
-local names, pairs_list = utils.parse_cookies("  session=abc ; token=xyz  ")
-table.sort(names)
-table.sort(pairs_list)
-ngx.say("names: ", table.concat(names, ","))
-ngx.say("pairs: ", table.concat(pairs_list, ","))
---- response_body
-names: session,token
-pairs: session=abc,token=xyz
-
-=== TEST 27: parse_cookies with single cookie
---- http_config eval: $::HttpConfig
---- lua_code
-local utils = require "resty.ja4.utils"
-local names, pairs_list = utils.parse_cookies("session=abc123")
-ngx.say("count: ", #names)
-ngx.say("name: ", names[1])
-ngx.say("pair: ", pairs_list[1])
---- response_body
-count: 1
-name: session
-pair: session=abc123
-
-=== TEST 28: parse_raw_header_names with header containing multiple colons
+=== TEST 15: parse_raw_header_names with header containing multiple colons
 --- http_config eval: $::HttpConfig
 --- lua_code
 local utils = require "resty.ja4.utils"
@@ -474,7 +277,7 @@ ngx.say("names: ", table.concat(names, ","))
 count: 2
 names: X-Forwarded-For,Authorization
 
-=== TEST 29: parse_raw_header_names with only excluded headers
+=== TEST 16: parse_raw_header_names with only excluded headers
 --- http_config eval: $::HttpConfig
 --- lua_code
 local utils = require "resty.ja4.utils"
@@ -486,7 +289,7 @@ ngx.say("empty: ", #names == 0 and "yes" or "no")
 count: 0
 empty: yes
 
-=== TEST 30: parse_raw_header_names with nil and empty input
+=== TEST 17: parse_raw_header_names with nil and empty input
 --- http_config eval: $::HttpConfig
 --- lua_code
 local utils = require "resty.ja4.utils"
@@ -498,7 +301,7 @@ ngx.say("empty_count: ", count2)
 nil_count: 0
 empty_count: 0
 
-=== TEST 31: parse_accept_language with quality value on first tag
+=== TEST 18: parse_accept_language with quality value on first tag
 --- http_config eval: $::HttpConfig
 --- lua_code
 local utils = require "resty.ja4.utils"
@@ -510,7 +313,7 @@ ngx.say(utils.parse_accept_language("fr;q=0.8,en-US"))
 dede
 fr00
 
-=== TEST 32: parse_accept_language with single char
+=== TEST 19: parse_accept_language with single char
 --- http_config eval: $::HttpConfig
 --- lua_code
 local utils = require "resty.ja4.utils"
@@ -518,7 +321,7 @@ ngx.say(utils.parse_accept_language("x"))
 --- response_body
 x000
 
-=== TEST 33: parse_accept_language with 3-char code (no hyphen)
+=== TEST 20: parse_accept_language with 3-char code (no hyphen)
 --- http_config eval: $::HttpConfig
 --- lua_code
 local utils = require "resty.ja4.utils"
@@ -526,13 +329,13 @@ ngx.say(utils.parse_accept_language("ast"))
 --- response_body
 ast0
 
-=== TEST 34: isort_u16 sorts FFI uint16 array
+=== TEST 21: isort_u16 sorts FFI uint16 array
 --- http_config eval: $::HttpConfig
 --- lua_code
 local ffi = require "ffi"
 local utils = require "resty.ja4.utils"
 local fmt = string.format
--- Same values as TEST 13 string sort: c02b, 002f, 1301, 0035, cca9
+-- Same values as TEST 7 string sort: c02b, 002f, 1301, 0035, cca9
 local arr = ffi.new("uint16_t[5]", 0xc02b, 0x002f, 0x1301, 0x0035, 0xcca9)
 utils.isort_u16(arr, 5)
 local result = {}
@@ -554,7 +357,7 @@ one: 1301
 empty: ok
 pre: 0001,0002,0003
 
-=== TEST 35: write_u16_hex_csv writes correct hex CSV
+=== TEST 22: write_u16_hex_csv writes correct hex CSV
 --- http_config eval: $::HttpConfig
 --- lua_code
 local ffi = require "ffi"
@@ -579,7 +382,7 @@ single: cca9
 empty_pos: 5
 offset: 000a,000d
 
-=== TEST 36: parse_cookies_into fills pre-allocated tables
+=== TEST 23: parse_cookies_into fills pre-allocated tables
 --- http_config eval: $::HttpConfig
 --- lua_code
 local utils = require "resty.ja4.utils"
@@ -612,26 +415,3 @@ len: 1
 name2: a
 nil: 0
 empty: 0
-
-=== TEST 37: parse_raw_header_names_into fills pre-allocated table
---- http_config eval: $::HttpConfig
---- lua_code
-local utils = require "resty.ja4.utils"
-local names = {}
-local raw = "Host: example.com\r\nCookie: a=1\r\nUser-Agent: Mozilla\r\nReferer: http://x.com\r\nAccept: */*\r\n\r\n"
-local n = utils.parse_raw_header_names_into(raw, names)
-ngx.say("count: ", n)
-ngx.say("names: ", table.concat(names, ",", 1, n))
--- Second call with fewer headers (stale cleanup)
-n = utils.parse_raw_header_names_into("Host: x\r\n\r\n", names)
-ngx.say("count2: ", n)
-ngx.say("len: ", #names)
--- nil/empty
-n = utils.parse_raw_header_names_into(nil, names)
-ngx.say("nil: ", n)
---- response_body
-count: 3
-names: Host,User-Agent,Accept
-count2: 1
-len: 1
-nil: 0

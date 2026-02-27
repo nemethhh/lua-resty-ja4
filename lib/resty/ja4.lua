@@ -191,7 +191,7 @@ function _M.build(data)
         pos = write_u16_hex_csv(ext_u16, ext_n, out_buf, pos)
         if data.sig_algs and #data.sig_algs > 0 then
             out_buf[pos] = 0x5F; pos = pos + 1
-            pos = utils.write_hex4_csv_at(data.sig_algs, #data.sig_algs, out_buf, pos)
+            pos = write_hex4_csv_at(data.sig_algs, #data.sig_algs, out_buf, pos)
         end
     end
 

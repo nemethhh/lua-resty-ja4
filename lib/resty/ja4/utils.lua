@@ -1,7 +1,6 @@
 -- Section 1: FFI imports & module setup
 local ffi = require "ffi"
 local ffi_new = ffi.new
-local ffi_string = ffi.string
 local ffi_copy = ffi.copy
 local ffi_cast = ffi.cast
 local bit = require "bit"

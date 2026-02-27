@@ -1,0 +1,98 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.extract.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: extract
+        run: |
+          TAG_VERSION="${GITHUB_REF#refs/tags/v}"
+          echo "version=$TAG_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Tag version: $TAG_VERSION"
+
+      - name: Check dist.ini version
+        run: |
+          DIST_VERSION=$(grep '^version' dist.ini | sed 's/.*= *//')
+          echo "dist.ini version: $DIST_VERSION"
+          if [ "$DIST_VERSION" != "${{ steps.extract.outputs.version }}" ]; then
+            echo "ERROR: dist.ini version ($DIST_VERSION) does not match tag (${{ steps.extract.outputs.version }})"
+            exit 1
+          fi
+
+      - name: Check utils.lua _VERSION
+        run: |
+          LUA_VERSION=$(grep '_VERSION' lib/resty/ja4/utils.lua | sed 's/.*"\(.*\)".*/\1/')
+          echo "utils.lua _VERSION: $LUA_VERSION"
+          if [ "$LUA_VERSION" != "${{ steps.extract.outputs.version }}" ]; then
+            echo "ERROR: utils.lua _VERSION ($LUA_VERSION) does not match tag (${{ steps.extract.outputs.version }})"
+            exit 1
+          fi
+
+  test:
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run unit tests
+        run: |
+          docker build -f Dockerfile.test -t lua-resty-ja4-test .
+          docker run --rm --init lua-resty-ja4-test
+
+      - name: Run E2E tests (OpenResty 1.27)
+        run: >
+          docker compose -f e2e/docker-compose.e2e.yml up
+          --build --abort-on-container-exit --exit-code-from tests-1.27
+          nginx-1.27 tests-1.27
+
+      - name: Clean up 1.27 containers
+        if: always()
+        run: docker compose -f e2e/docker-compose.e2e.yml down --volumes --remove-orphans
+
+      - name: Run E2E tests (OpenResty 1.29)
+        run: >
+          docker compose -f e2e/docker-compose.e2e.yml up
+          --build --abort-on-container-exit --exit-code-from tests-1.29
+          nginx-1.29 tests-1.29
+
+      - name: Clean up 1.29 containers
+        if: always()
+        run: docker compose -f e2e/docker-compose.e2e.yml down --volumes --remove-orphans
+
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install OpenResty and opm
+        run: |
+          sudo apt-get -y install --no-install-recommends wget gnupg ca-certificates lsb-release
+          wget -O - https://openresty.org/package/pubkey.gpg | sudo gpg --dearmor -o /usr/share/keyrings/openresty.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/openresty.gpg] http://openresty.org/package/ubuntu $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/openresty.list > /dev/null
+          sudo apt-get update
+          sudo apt-get -y install openresty-opm
+
+      - name: Configure opm
+        run: |
+          mkdir -p ~/.opmrc_dir
+          cat > ~/.opmrc <<EOF
+          github_account=${{ secrets.OPM_GITHUB_ACCOUNT }}
+          github_token=${{ secrets.OPM_GITHUB_TOKEN }}
+          upload_server=https://opm.openresty.org
+          download_server=https://opm.openresty.org
+          EOF
+
+      - name: Build and upload package
+        run: |
+          opm build
+          opm upload

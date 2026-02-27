@@ -93,9 +93,10 @@ end)
 ja4.configure({ hash = true })
 ja4h.configure({ hash = true })
 
--- sha256_hex12 — input-size independent, show once
-io.write(string.format("%-" .. W1 .. "s", "sha256_hex12()"))
-local sha_ops = bench(function() utils.sha256_hex12("1301,1302,1303,c02b,c02f") end)
+-- sha256_to_buf — input-size independent, show once
+io.write(string.format("%-" .. W1 .. "s", "sha256_to_buf()"))
+local _sha_target = ffi.new("uint8_t[64]")
+local sha_ops = bench(function() utils.sha256_to_buf("1301,1302,1303,c02b,c02f", 25, _sha_target, 0) end)
 io.write(string.format("%-" .. W2 .. "s", fmt_ops(sha_ops)))
 io.write("(input-size independent)\n")
 
@@ -105,10 +106,11 @@ row("parse_sig_algs()", function(p)
     return function() utils.parse_sig_algs(r) end
 end)
 
-row("parse_cookies()", function(p)
+row("parse_cookies_into()", function(p)
     local c = p.cookie_str
     if not c then return nil end
-    return function() utils.parse_cookies(c) end
+    local names, pairs_list = {}, {}
+    return function() utils.parse_cookies_into(c, names, pairs_list) end
 end)
 
 row("parse_raw_header_names()", function(p)

@@ -19,9 +19,9 @@ io.write(string.format("Profile: typical | Warmup: %d | Measured: %d iterations\
 for _ = 1, WARMUP do
     ja4.build(profile.ja4)
     ja4h.build(profile.ja4h)
-    utils.sha256_hex12("warmup")
+    utils.parse_alpn(profile.raw_alpn)
     utils.parse_sig_algs(profile.raw_sig_algs)
-    utils.parse_cookies(profile.cookie_str)
+    utils.parse_cookies_into(profile.cookie_str, {}, {})
     utils.parse_raw_header_names(profile.raw_headers)
 end
 
@@ -58,9 +58,9 @@ local tmp3 = "/tmp/jitp_utils_f.txt"
 io.write("--- Function-level: utility functions ---\n\n")
 jitp.start("f", tmp3)
 for _ = 1, ITERS do
-    utils.sha256_hex12("profile_test")
+    utils.parse_alpn(profile.raw_alpn)
     utils.parse_sig_algs(profile.raw_sig_algs)
-    utils.parse_cookies(profile.cookie_str)
+    utils.parse_cookies_into(profile.cookie_str, {}, {})
     utils.parse_raw_header_names(profile.raw_headers)
 end
 jitp.stop()

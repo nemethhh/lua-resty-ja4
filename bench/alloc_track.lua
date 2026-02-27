@@ -2,6 +2,7 @@
 -- Allocation tracking for JA4/JA4H functions.
 -- Stops GC during measurement to capture net allocation per call.
 
+local ffi = require("ffi")
 local ja4 = require("resty.ja4")
 local ja4h = require("resty.ja4h")
 local utils = require("resty.ja4.utils")
@@ -54,13 +55,15 @@ for _, pname in ipairs(testdata.profiles) do
 
     report("ja4.build()", function() ja4.build(profile.ja4) end)
     report("ja4h.build()", function() ja4h.build(profile.ja4h) end)
-    report("sha256_hex12()", function() utils.sha256_hex12("test") end)
+    local _alloc_target = ffi.new("uint8_t[64]")
+    report("sha256_to_buf()", function() utils.sha256_to_buf("test", 4, _alloc_target, 0) end)
 
     if profile.raw_sig_algs then
         report("parse_sig_algs()", function() utils.parse_sig_algs(profile.raw_sig_algs) end)
     end
     if profile.cookie_str then
-        report("parse_cookies()", function() utils.parse_cookies(profile.cookie_str) end)
+        local _ck_names, _ck_pairs = {}, {}
+        report("parse_cookies_into()", function() utils.parse_cookies_into(profile.cookie_str, _ck_names, _ck_pairs) end)
     end
     if profile.raw_headers then
         report("parse_raw_header_names()", function() utils.parse_raw_header_names(profile.raw_headers) end)

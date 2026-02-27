@@ -22,9 +22,9 @@ jitv.start(TMPFILE)
 
 for _ = 1, ITERS do ja4.build(profile.ja4) end
 for _ = 1, ITERS do ja4h.build(profile.ja4h) end
-for _ = 1, ITERS do utils.sha256_hex12("trace_test") end
+for _ = 1, ITERS do utils.parse_alpn(profile.raw_alpn) end
 for _ = 1, ITERS do utils.parse_sig_algs(profile.raw_sig_algs) end
-for _ = 1, ITERS do utils.parse_cookies(profile.cookie_str) end
+for _ = 1, ITERS do utils.parse_cookies_into(profile.cookie_str, {}, {}) end
 for _ = 1, ITERS do utils.parse_raw_header_names(profile.raw_headers) end
 for _ = 1, ITERS do utils.parse_alpn(profile.raw_alpn) end
 

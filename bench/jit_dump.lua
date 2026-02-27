@@ -22,7 +22,7 @@ jitdump.start("+tim", TMPFILE)
 
 for _ = 1, 200 do ja4.build(profile.ja4) end
 for _ = 1, 200 do ja4h.build(profile.ja4h) end
-for _ = 1, 200 do utils.sha256_hex12("dump_test") end
+for _ = 1, 200 do utils.parse_sig_algs(profile.raw_sig_algs) end
 
 jitdump.off()
 

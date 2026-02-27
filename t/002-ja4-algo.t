@@ -194,7 +194,6 @@ ec: 99
 --- http_config eval: $::HttpConfig
 --- lua_code
 local ja4 = require "resty.ja4"
-local utils = require "resty.ja4.utils"
 local result = ja4.build({
     protocol   = "t",
     version    = "12",
@@ -205,7 +204,7 @@ local result = ja4.build({
     sig_algs   = nil,
 })
 -- Section C should hash only extensions (no sig_algs separator)
-local expected_c = utils.sha256_hex12("000a,000d")
+local expected_c = "8b63dc3fd33f"
 local section_c = result:sub(25, 36)
 ngx.say("a: ", result:sub(1, 10))
 ngx.say("c_match: ", section_c == expected_c and "yes" or "no")
@@ -217,7 +216,6 @@ c_match: yes
 --- http_config eval: $::HttpConfig
 --- lua_code
 local ja4 = require "resty.ja4"
-local utils = require "resty.ja4.utils"
 local result = ja4.build({
     protocol   = "t",
     version    = "13",
@@ -228,7 +226,7 @@ local result = ja4.build({
     sig_algs   = {"0403"},
 })
 -- ext_n=0, but sig_algs present → hash includes "_0403"
-local expected_c = utils.sha256_hex12("_0403")
+local expected_c = "28bec3923df4"
 local section_c = result:sub(25, 36)
 ngx.say("a: ", result:sub(1, 10))
 ngx.say("c_match: ", section_c == expected_c and "yes" or "no")

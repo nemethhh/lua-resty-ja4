@@ -61,17 +61,17 @@ jit-report: bench-build
 	$(BENCH_RUN) /app/bench/jit_dump.lua > bench/reports/dump.txt 2>&1
 	@echo "Reports saved to bench/reports/"
 
-# --- Local CI (nektos/act) ---
+# --- Local CI (gh act) ---
 .PHONY: ci-local ci-local-e2e ci-local-release
 
 ci-local:
-	act push --container-architecture linux/amd64 -W .github/workflows/ci.yml
+	gh act push --container-architecture linux/amd64 -W .github/workflows/ci.yml
 
 ci-local-e2e:
-	act push --container-architecture linux/amd64 -W .github/workflows/e2e-bench.yml
+	gh act push --container-architecture linux/amd64 -W .github/workflows/e2e-bench.yml
 
 ci-local-release:
-	act push --container-architecture linux/amd64 \
+	gh act push --container-architecture linux/amd64 \
 		--secret-file .secrets \
 		-e .github/act-events/tag-push.json \
 		-W .github/workflows/release.yml

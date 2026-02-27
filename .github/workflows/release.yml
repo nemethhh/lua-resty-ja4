@@ -46,20 +46,9 @@ jobs:
       - name: Run E2E tests (OpenResty 1.27)
         run: >
           docker compose -f e2e/docker-compose.e2e.yml up
-          --build --abort-on-container-exit --exit-code-from tests-1.27
-          nginx-1.27 tests-1.27
+          --build --abort-on-container-exit --exit-code-from tests
 
-      - name: Clean up 1.27 containers
-        if: always()
-        run: docker compose -f e2e/docker-compose.e2e.yml down --volumes --remove-orphans
-
-      - name: Run E2E tests (OpenResty 1.29)
-        run: >
-          docker compose -f e2e/docker-compose.e2e.yml up
-          --build --abort-on-container-exit --exit-code-from tests-1.29
-          nginx-1.29 tests-1.29
-
-      - name: Clean up 1.29 containers
+      - name: Clean up containers
         if: always()
         run: docker compose -f e2e/docker-compose.e2e.yml down --volumes --remove-orphans
 

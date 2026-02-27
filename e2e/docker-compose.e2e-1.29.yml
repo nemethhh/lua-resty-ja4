@@ -1,6 +1,11 @@
 services:
   nginx:
-    image: openresty/openresty:1.27.1.2-11-jammy
+    build:
+      context: ..
+      dockerfile: e2e/Dockerfile.openresty
+      args:
+        RESTY_VERSION: "1.29.2.1"
+        RESTY_J: "4"
     volumes:
       - ../lib:/app/lib:ro
       - ./nginx.conf:/usr/local/openresty/nginx/conf/nginx.conf:ro

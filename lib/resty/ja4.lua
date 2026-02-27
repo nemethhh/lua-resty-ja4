@@ -15,7 +15,7 @@ local is_grease = utils.is_grease
 local LEGACY_VERSION_MAP = utils.LEGACY_VERSION_MAP
 local csv_buf = utils.csv_buf
 local write_u16_hex_csv = utils.write_u16_hex_csv
-local append_hex4_csv = utils.append_hex4_csv
+local write_hex4_csv_at = utils.write_hex4_csv_at
 local sha256_to_buf = utils.sha256_to_buf
 local EMPTY_HASH = utils.EMPTY_HASH
 local NUM2 = utils.NUM2
@@ -173,7 +173,7 @@ function _M.build(data)
         local sc_len = write_u16_hex_csv(ext_u16, ext_n, csv_buf, 0)
         if data.sig_algs and #data.sig_algs > 0 then
             csv_buf[sc_len] = 0x5F  -- '_'
-            sc_len = append_hex4_csv(data.sig_algs, #data.sig_algs, sc_len + 1)
+            sc_len = write_hex4_csv_at(data.sig_algs, #data.sig_algs, csv_buf, sc_len + 1)
         end
         if ext_n == 0 and (not data.sig_algs or #data.sig_algs == 0) then
             ffi_copy(out_buf + pos, EMPTY_HASH, 12)

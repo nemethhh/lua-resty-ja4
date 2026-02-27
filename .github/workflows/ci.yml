@@ -1,0 +1,19 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+    tags-ignore: ['**']
+  pull_request:
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build test image
+        run: docker build -f Dockerfile.test -t lua-resty-ja4-test .
+
+      - name: Run unit tests
+        run: docker run --rm --init lua-resty-ja4-test

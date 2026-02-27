@@ -1,133 +1,193 @@
 # lua-resty-ja4
 
-JA4 and JA4H fingerprinting for OpenResty/nginx. Generates [JA4](https://blog.foxio.io/ja4%2B-network-fingerprinting) TLS client fingerprints and JA4H HTTP request fingerprints.
+JA4 and JA4H fingerprinting for OpenResty.
 
-Built for LuaJIT with FFI-based SHA256 hashing, pre-computed lookup tables, and zero-allocation hot paths.
+This library provides:
+- `resty.ja4` for TLS ClientHello fingerprints (JA4)
+- `resty.ja4h` for HTTP request fingerprints (JA4H)
+
+It is implemented with LuaJIT FFI and optimized for low allocation and high throughput.
+
+## Features
+
+- JA4 generation from live TLS handshakes in `ssl_client_hello_by_lua*`
+- JA4H generation from live HTTP requests (HTTP/1.x and HTTP/2 path)
+- Hash mode (default): truncated SHA256 sections
+- Raw mode: full sortable CSV sections
+- Direct `build()` APIs when you already have parsed handshake/header data
+- Request-local storage helpers via `ngx.ctx` (`store()` / `get()`)
+
+## Requirements
+
+- OpenResty with LuaJIT FFI
+- `lua-resty-core` (used by JA4H FFI header extraction path)
+- For live JA4 `compute()`: OpenResty with `ngx.ssl.get_req_ssl_pointer()` available (tested on OpenResty 1.27+)
+
+Tested in this repo against:
+- OpenResty 1.27.1.2
+- OpenResty 1.29.2.1
 
 ## Installation
 
-Copy the library into your OpenResty Lua package path:
+Copy the library into your Lua package path:
 
 ```bash
 cp -r lib/resty/* /usr/local/openresty/lualib/resty/
 ```
 
-**Requirements:** OpenResty **1.27.1.2** or later with LuaJIT FFI.
+Or keep it in-repo and add to `lua_package_path`:
 
-JA4 TLS fingerprinting uses direct OpenSSL FFI calls via `ngx.ssl.get_req_ssl_pointer()`, which is available since OpenResty 1.27. JA4H HTTP fingerprinting works on any OpenResty version.
+```nginx
+lua_package_path "/path/to/lua-resty-ja4/lib/?.lua;/path/to/lua-resty-ja4/lib/?/init.lua;;";
+```
 
-## Usage
+## Quick Start
 
-### JA4 — TLS Client Fingerprinting
-
-Compute JA4 fingerprints from the TLS ClientHello. Must be called from `ssl_client_hello_by_lua_block`:
+Example: compute JA4 during TLS handshake, compute JA4H during request processing, and expose both as response headers.
 
 ```nginx
 server {
     listen 443 ssl;
+    http2 on;
+
+    ssl_certificate     /etc/nginx/server.crt;
+    ssl_certificate_key /etc/nginx/server.key;
 
     ssl_client_hello_by_lua_block {
         local ja4 = require "resty.ja4"
-        local fp = ja4.compute()
-        ja4.store(fp)
+        ja4.configure({ hash = true })
+        ja4.compute()
+    }
+
+    header_filter_by_lua_block {
+        local ja4 = require "resty.ja4"
+        local ja4h = require "resty.ja4h"
+        ja4h.configure({ hash = true })
+
+        local tls_fp = ja4.get()
+        if tls_fp then
+            ngx.header["X-JA4"] = tls_fp
+        end
+
+        local http_fp = ja4h.compute()
+        if http_fp then
+            ngx.header["X-JA4H"] = http_fp
+        end
     }
 
     location / {
-        content_by_lua_block {
-            local ja4 = require "resty.ja4"
-            ngx.say("JA4: ", ja4.get())
-        }
+        return 200 "ok";
     }
 }
 ```
 
-### JA4H — HTTP Request Fingerprinting
+## API
 
-Compute JA4H fingerprints from HTTP request headers:
+### `resty.ja4`
 
-```nginx
-location / {
-    content_by_lua_block {
-        local ja4h = require "resty.ja4h"
-        local fp = ja4h.compute()
-        ngx.say("JA4H: ", fp)
-    }
+- `configure({ hash = boolean })`
+- `build(data)`
+- `compute()`
+- `store(value)`
+- `get()`
+
+`compute()` must run in `ssl_client_hello_by_lua*` context.
+
+`build(data)` input:
+
+```lua
+{
+  protocol   = "t",                    -- "t" (TCP), "q" (QUIC), "d" (DTLS)
+  version    = "13",                   -- 13,12,11,10,s3,s2,00
+  sni        = "d",                    -- "d" domain or "i" IP
+  ciphers    = { 0x1301, 0x1302 },
+  extensions = { 0x0000, 0x0010, 0x000d },
+  alpn       = "h2",
+  sig_algs   = { "0403", "0804" },   -- optional
 }
 ```
 
-### Configuration
+Example output (hash mode):
 
-Both modules default to hash mode (truncated SHA256). Switch to raw mode to get full CSV values:
+```text
+t13d1516h2_8daaf6152771_e5627efa2ab1
+```
+
+### `resty.ja4h`
+
+- `configure({ hash = boolean })`
+- `build(data)`
+- `compute()`
+- `store(value)`
+- `get()`
+
+`compute()` supports HTTP/1.x and HTTP/2 request paths.
+
+`build(data)` input:
 
 ```lua
-local ja4 = require "resty.ja4"
-ja4.configure({ hash = false })  -- raw mode
+{
+  method          = "GET",
+  version         = "11",              -- 10,11,20,30,00
+  has_cookie      = true,
+  has_referer     = false,
+  header_names    = { "Host", "Accept" },
+  accept_language = "en-US,en;q=0.9",  -- optional
+  cookie_str      = "a=1; b=2",         -- optional
+}
 ```
 
-### Building Fingerprints from Custom Data
+Example output (hash mode):
 
-You can call `build()` directly with pre-extracted data:
-
-```lua
--- JA4
-local ja4 = require "resty.ja4"
-local fp = ja4.build({
-    protocol   = "t",                          -- "t" (TCP), "q" (QUIC), "d" (DTLS)
-    version    = "13",                         -- TLS version code
-    sni        = "d",                          -- "d" (domain) or "i" (IP)
-    ciphers    = { 0x1301, 0x1302, 0x1303 },   -- cipher suite IDs
-    extensions = { 0x0033, 0x002b },           -- extension type IDs
-    alpn       = "h2",                         -- 2-char ALPN code
-    sig_algs   = { "0403", "0804" },           -- signature algorithm hex strings
-})
-
--- JA4H
-local ja4h = require "resty.ja4h"
-local fp = ja4h.build({
-    method          = "GET",
-    version         = "11",                    -- HTTP version code
-    has_cookie      = true,
-    has_referer     = false,
-    header_names    = { "Host", "Accept", "User-Agent" },
-    accept_language = "en-US,en;q=0.9",
-    cookie_str      = "session=abc; theme=dark",
-})
+```text
+he11nn05enus_6f8992deff94_000000000000_000000000000
 ```
 
-## Fingerprint Format
+## Hash vs Raw Mode
 
-**JA4** (TLS): `t13d1516h2_<ciphers_hash>_<extensions_hash>`
-- Section A (10 chars): protocol + TLS version + SNI + cipher count + extension count + ALPN
-- Section B (12 chars): sorted cipher suites, SHA256-truncated
-- Section C (12 chars): sorted extensions + signature algorithms, SHA256-truncated
+Default is hash mode (`hash = true`).
 
-**JA4H** (HTTP): `ge11cn05enus_<headers_hash>_<cookie_names_hash>_<cookie_pairs_hash>`
-- Section A (12 chars): method + HTTP version + cookie flag + referer flag + header count + language
-- Section B (12 chars): header names in order, SHA256-truncated
-- Section C (12 chars): sorted cookie names, SHA256-truncated
-- Section D (12 chars): sorted cookie name=value pairs, SHA256-truncated
+Hash mode output lengths:
+- JA4: 36 chars (`sectionA_hash_hash`)
+- JA4H: 51 chars (`sectionA_hash_hash_hash`)
 
-## Testing
+Raw mode (`hash = false`) emits full CSV sections for debugging and comparisons.
 
-Tests use [Test::Nginx](https://github.com/openresty/test-nginx) and run in Docker:
+## Notes and Caveats
+
+- `configure()` changes module-level mode per worker. Set it once during startup and avoid toggling per request.
+- `store()` / `get()` use `ngx.ctx`, so values are request-local.
+- JA4 extension visibility depends on what OpenSSL reports through ClientHello APIs. Some wire extensions may be omitted by OpenSSL and therefore not appear in JA4 section C.
+- JA4H excludes `Cookie` and `Referer` from the header-name hash section by design (they are represented by flags and cookie sections).
+
+## Development
+
+Unit tests (Test::Nginx in Docker):
 
 ```bash
-make test            # unit tests
-make test-verbose    # verbose output
-make e2e             # end-to-end tests (Docker Compose, tests OpenResty 1.27 + 1.29)
-make e2e-clean       # remove e2e containers and images
+make test
+make test-verbose
 ```
 
-## Benchmarking
+E2E tests (Docker Compose, OpenResty 1.27 and 1.29):
 
 ```bash
-make jit-bench       # micro-benchmarks (ops/sec)
-make jit-alloc       # memory allocation tracking
-make jit-trace       # JIT trace analysis
-make jit-all         # run all analyses
-make jit-report      # save reports to bench/reports/
+make e2e
+make e2e-clean
+```
+
+Benchmarks and profiling:
+
+```bash
+make jit-bench
+make jit-alloc
+make jit-trace
+make jit-profile
+make jit-dump
+make jit-all
+make jit-report
 ```
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).

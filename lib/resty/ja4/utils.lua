@@ -19,9 +19,7 @@ end
 
 local EMPTY_TAB = {}
 
-local _M = {
-    _VERSION = "0.1.0"
-}
+local _M = {}
 
 _M.new_tab = new_tab
 _M.EMPTY_HASH = "000000000000"

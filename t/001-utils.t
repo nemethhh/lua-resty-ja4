@@ -38,9 +38,9 @@ __DATA__
 --- http_config eval: $::HttpConfig
 --- lua_code
 local utils = require "resty.ja4.utils"
-ngx.say(utils._VERSION)
+ngx.say(utils.EMPTY_HASH)
 --- response_body
-0.1.0
+000000000000
 
 === TEST 2: tls_version_code maps versions
 --- http_config eval: $::HttpConfig

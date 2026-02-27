@@ -44,9 +44,7 @@ local ciphers_out_ptr = ffi_new("const unsigned char*[1]")
 local ext_out_ptr = ffi_new("int*[1]")
 local ext_len_ptr = ffi_new("size_t[1]")
 
-local _M = {
-    _VERSION = utils._VERSION
-}
+local _M = {}
 
 local _hash_mode = true
 

@@ -4,6 +4,9 @@ on:
   push:
     tags: ['v*']
 
+permissions:
+  contents: read
+
 jobs:
   validate:
     runs-on: ubuntu-latest
@@ -30,7 +33,7 @@ jobs:
 
       - name: Check utils.lua _VERSION
         run: |
-          LUA_VERSION=$(grep '_VERSION' lib/resty/ja4/utils.lua | sed 's/.*"\(.*\)".*/\1/')
+          LUA_VERSION=$(sed -n 's/.*_VERSION *= *"\(.*\)".*/\1/p' lib/resty/ja4/utils.lua | head -1)
           echo "utils.lua _VERSION: $LUA_VERSION"
           if [ "$LUA_VERSION" != "${{ steps.extract.outputs.version }}" ]; then
             echo "ERROR: utils.lua _VERSION ($LUA_VERSION) does not match tag (${{ steps.extract.outputs.version }})"

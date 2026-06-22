@@ -140,14 +140,25 @@ _M.isort_u16 = isort_u16
 -- Section 5: CSV serialization
 
 -- FFI buffer for building comma-separated hex values (ja4 hash inputs).
-local csv_buf = ffi_new("uint8_t[512]")
+-- Sized to hold the clamped cipher/extension lists (<=256 entries * 5 bytes).
+local CSV_BUF_SIZE = 2048
+local csv_buf = ffi_new("uint8_t[" .. CSV_BUF_SIZE .. "]")
 _M.csv_buf = csv_buf
+_M.CSV_BUF_SIZE = CSV_BUF_SIZE
+
+-- All CSV writers below take a `cap` = capacity of the destination buffer and
+-- never write past it. Without a bound an attacker- or client-controlled count
+-- (ciphers, extensions, header names, cookie pairs) overflows the fixed FFI
+-- buffer into the LuaJIT heap -> GC corruption -> worker SIGSEGV.
 
 -- Write uint16 FFI array as comma-separated 4-char hex into buf at offset.
-local function write_u16_hex_csv(arr, n, buf, offset)
+local function write_u16_hex_csv(arr, n, buf, offset, cap)
     if n == 0 then return offset end
+    cap = cap or 0x7fffffff
     local pos = offset
     for i = 0, n - 1 do
+        local need = (i > 0 and 1 or 0) + 4
+        if pos + need > cap then break end
         if i > 0 then
             buf[pos] = 0x2C  -- ','
             pos = pos + 1
@@ -164,9 +175,12 @@ end
 _M.write_u16_hex_csv = write_u16_hex_csv
 
 -- Write array of 4-char hex strings as CSV into arbitrary buffer at pos.
-local function write_hex4_csv_at(hex_array, n, buf, pos)
+local function write_hex4_csv_at(hex_array, n, buf, pos, cap)
     if n == 0 then return pos end
+    cap = cap or 0x7fffffff
     for i = 1, n do
+        local need = (i > 1 and 1 or 0) + 4
+        if pos + need > cap then break end
         if i > 1 then
             buf[pos] = 0x2C  -- ','
             pos = pos + 1
@@ -183,15 +197,18 @@ end
 _M.write_hex4_csv_at = write_hex4_csv_at
 
 -- Write array of variable-length Lua strings as CSV into buffer at pos.
-local function write_str_csv_at(str_array, n, buf, pos)
+local function write_str_csv_at(str_array, n, buf, pos, cap)
     if n == 0 then return pos end
+    cap = cap or 0x7fffffff
     for i = 1, n do
+        local s = str_array[i]
+        local slen = #s
+        local need = (i > 1 and 1 or 0) + slen
+        if pos + need > cap then break end
         if i > 1 then
             buf[pos] = 0x2C  -- ','
             pos = pos + 1
         end
-        local s = str_array[i]
-        local slen = #s
         ffi_copy(buf + pos, s, slen)
         pos = pos + slen
     end

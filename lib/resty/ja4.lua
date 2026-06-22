@@ -20,11 +20,17 @@ local sha256_to_buf = utils.sha256_to_buf
 local EMPTY_HASH = utils.EMPTY_HASH
 local NUM2 = utils.NUM2
 
-local cipher_u16 = ffi_new("uint16_t[256]")
-local ext_u16 = ffi_new("uint16_t[256]")
--- Raw mode worst case: 10 (section_a) + 1 + 494 (99 ciphers) + 1 + 494 (99 exts)
--- + 1 + ~200 (sig_algs) ≈ 1200B. Hash mode: fixed 36B. 2048B covers all cases.
-local out_buf = ffi_new("uint8_t[2048]")
+-- Capacity of the cipher/extension FFI arrays. copy_ciphers/filter_extensions_u16
+-- clamp to this; a ClientHello can legitimately carry far more entries.
+local CIPHER_CAP = 256
+local cipher_u16 = ffi_new("uint16_t[" .. CIPHER_CAP .. "]")
+local ext_u16 = ffi_new("uint16_t[" .. CIPHER_CAP .. "]")
+-- Hash mode: fixed 36B. Raw mode worst case with CIPHER_CAP entries:
+-- 11 + 256*5 + 1 + 256*5 + 1 + sig_algs ≈ 2.8KB. 4096B covers it; the CSV
+-- writers are bounded by these sizes regardless.
+local OUT_BUF_SIZE = 4096
+local out_buf = ffi_new("uint8_t[" .. OUT_BUF_SIZE .. "]")
+local CSV_BUF_SIZE = utils.CSV_BUF_SIZE
 
 -- Load ssl.clienthello once at module load (not per-call).
 -- pcall here handles non-SSL or non-OpenResty environments gracefully.
@@ -58,6 +64,7 @@ end
 -- Separate function gives JIT a clean trace boundary.
 local function copy_ciphers(ciphers, arr)
     local n = #ciphers
+    if n > CIPHER_CAP then n = CIPHER_CAP end
     for i = 1, n do
         arr[i - 1] = ciphers[i]
     end
@@ -71,6 +78,7 @@ local function filter_extensions_u16(extensions, arr)
     for i = 1, #extensions do
         local ext = extensions[i]
         if ext ~= 0x0000 and ext ~= 0x0010 then
+            if n >= CIPHER_CAP then break end
             arr[n] = ext
             n = n + 1
         end
@@ -160,7 +168,7 @@ function _M.build(data)
         if cn == 0 then
             ffi_copy(out_buf + pos, EMPTY_HASH, 12)
         else
-            local csv_len = write_u16_hex_csv(cipher_u16, cn, csv_buf, 0)
+            local csv_len = write_u16_hex_csv(cipher_u16, cn, csv_buf, 0, CSV_BUF_SIZE)
             sha256_to_buf(csv_buf, csv_len, out_buf, pos)
         end
         pos = pos + 12  -- 23
@@ -168,10 +176,10 @@ function _M.build(data)
         out_buf[pos] = 0x5F; pos = pos + 1  -- 24
 
         -- Section C: sorted exts + sig_algs -> csv_buf -> SHA256 -> 12 hex bytes
-        local sc_len = write_u16_hex_csv(ext_u16, ext_n, csv_buf, 0)
-        if data.sig_algs and #data.sig_algs > 0 then
+        local sc_len = write_u16_hex_csv(ext_u16, ext_n, csv_buf, 0, CSV_BUF_SIZE)
+        if data.sig_algs and #data.sig_algs > 0 and sc_len < CSV_BUF_SIZE then
             csv_buf[sc_len] = 0x5F  -- '_'
-            sc_len = write_hex4_csv_at(data.sig_algs, #data.sig_algs, csv_buf, sc_len + 1)
+            sc_len = write_hex4_csv_at(data.sig_algs, #data.sig_algs, csv_buf, sc_len + 1, CSV_BUF_SIZE)
         end
         if ext_n == 0 and (not data.sig_algs or #data.sig_algs == 0) then
             ffi_copy(out_buf + pos, EMPTY_HASH, 12)
@@ -181,15 +189,15 @@ function _M.build(data)
         pos = pos + 12  -- 36
     else
         -- Section B raw: hex CSV directly into out_buf
-        pos = write_u16_hex_csv(cipher_u16, cn, out_buf, pos)
+        pos = write_u16_hex_csv(cipher_u16, cn, out_buf, pos, OUT_BUF_SIZE)
 
         out_buf[pos] = 0x5F; pos = pos + 1
 
         -- Section C raw: exts CSV + '_' + sig_algs CSV
-        pos = write_u16_hex_csv(ext_u16, ext_n, out_buf, pos)
-        if data.sig_algs and #data.sig_algs > 0 then
+        pos = write_u16_hex_csv(ext_u16, ext_n, out_buf, pos, OUT_BUF_SIZE)
+        if data.sig_algs and #data.sig_algs > 0 and pos < OUT_BUF_SIZE then
             out_buf[pos] = 0x5F; pos = pos + 1
-            pos = write_hex4_csv_at(data.sig_algs, #data.sig_algs, out_buf, pos)
+            pos = write_hex4_csv_at(data.sig_algs, #data.sig_algs, out_buf, pos, OUT_BUF_SIZE)
         end
     end
 

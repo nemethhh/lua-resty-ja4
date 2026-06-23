@@ -268,12 +268,21 @@ function _M.parse_sig_algs(raw)
     local max_count = rshift(raw_len - 2, 1)
     if count > max_count then count = max_count end
     local algs = new_tab(count, 0)
+    local n = 0
     for i = 1, count do
         local offset = 2 + (i - 1) * 2
         if offset + 2 > raw_len then break end
         local hi = byte(raw, offset + 1)
         local lo = byte(raw, offset + 2)
-        algs[i] = HEX4[hi * 256 + lo]
+        local val = hi * 256 + lo
+        -- JA4 spec: GREASE values are ignored everywhere, including sig_algs.
+        if not is_grease(val) then
+            n = n + 1
+            algs[n] = HEX4[val]
+        end
+    end
+    if n == 0 then
+        return nil
     end
     return algs
 end

@@ -3,15 +3,11 @@ local ffi_new = ffi.new
 local ffi_string = ffi.string
 local ffi_copy = ffi.copy
 local C = ffi.C
-local bit = require "bit"
-local lshift = bit.lshift
 local byte = string.byte
 local tonumber = tonumber
 local math_min = math.min
 local utils = require "resty.ja4.utils"
-local new_tab = utils.new_tab
 local isort_u16 = utils.isort_u16
-local is_grease = utils.is_grease
 local LEGACY_VERSION_MAP = utils.LEGACY_VERSION_MAP
 local csv_buf = utils.csv_buf
 local write_u16_hex_csv = utils.write_u16_hex_csv
@@ -19,36 +15,41 @@ local write_hex4_csv_at = utils.write_hex4_csv_at
 local sha256_to_buf = utils.sha256_to_buf
 local EMPTY_HASH = utils.EMPTY_HASH
 local NUM2 = utils.NUM2
+local ngx_log = ngx.log
+local ngx_WARN = ngx.WARN
 
--- Capacity of the cipher/extension FFI arrays. copy_ciphers/filter_extensions_u16
--- clamp to this; a ClientHello can legitimately carry far more entries.
-local CIPHER_CAP = 256
-local cipher_u16 = ffi_new("uint16_t[" .. CIPHER_CAP .. "]")
-local ext_u16 = ffi_new("uint16_t[" .. CIPHER_CAP .. "]")
--- Hash mode: fixed 36B. Raw mode worst case with CIPHER_CAP entries:
--- 11 + 256*5 + 1 + 256*5 + 1 + sig_algs ≈ 2.8KB. 4096B covers it; the CSV
+local MAX_CIPHERS    = utils.MAX_CIPHERS
+local MAX_EXTENSIONS = utils.MAX_EXTENSIONS
+local MAX_SIG_ALGS   = utils.MAX_SIG_ALGS
+local CSV_BUF_SIZE   = utils.CSV_BUF_SIZE
+
+-- Cipher/extension FFI arrays, sized to the caps. copy_ciphers and
+-- filter_extensions_u16 clamp to these; a ClientHello can carry far more.
+local cipher_u16 = ffi_new("uint16_t[" .. MAX_CIPHERS .. "]")
+local ext_u16 = ffi_new("uint16_t[" .. MAX_EXTENSIONS .. "]")
+-- Hash mode: fixed 36B. Raw mode worst case with the caps above:
+-- 11 + 256*5 + 1 + 256*5 + 1 + 256*5 ~= 3.85KB. 4096B covers it; the CSV
 -- writers are bounded by these sizes regardless.
 local OUT_BUF_SIZE = 4096
 local out_buf = ffi_new("uint8_t[" .. OUT_BUF_SIZE .. "]")
-local CSV_BUF_SIZE = utils.CSV_BUF_SIZE
 
 -- Load ssl.clienthello once at module load (not per-call).
 -- pcall here handles non-SSL or non-OpenResty environments gracefully.
 local ok_clt, ssl_clt = pcall(require, "ngx.ssl.clienthello")
 local ok_ssl, ngx_ssl = pcall(require, "ngx.ssl")
 
--- OpenSSL FFI: direct ClientHello access (works on OpenResty 1.27+)
-pcall(ffi.cdef, [[
-    size_t SSL_client_hello_get0_ciphers(void *ssl, const unsigned char **out);
-    int SSL_client_hello_get1_extensions_present(void *ssl, int **out, size_t *outlen);
-    unsigned int SSL_client_hello_get0_legacy_version(void *ssl);
-    void CRYPTO_free(void *ptr, const char *file, int line);
-]])
+-- Official cipher/extension getters (OpenResty >= 1.29.2.1). When absent,
+-- _M.build still works on pre-parsed data; only _M.compute requires them.
+local _have_getters = ok_clt
+    and ssl_clt.get_client_hello_ciphers ~= nil
+    and ssl_clt.get_client_hello_ext_present ~= nil
 
--- Module-level FFI buffers (reused per-call, no allocation)
-local ciphers_out_ptr = ffi_new("const unsigned char*[1]")
-local ext_out_ptr = ffi_new("int*[1]")
-local ext_len_ptr = ffi_new("size_t[1]")
+-- OpenSSL FFI: only the read-only ClientHello legacy_version is needed, for the
+-- TLS-1.2-only version fallback (no official wrapper exists). Ciphers and
+-- extensions now come from ngx.ssl.clienthello, which frees its own buffers.
+pcall(ffi.cdef, [[
+    unsigned int SSL_client_hello_get0_legacy_version(void *ssl);
+]])
 
 local _M = {}
 
@@ -60,67 +61,30 @@ function _M.configure(opts)
     end
 end
 
--- Copy cipher uint16 values from Lua table to FFI array.
+-- Copy cipher uint16 values from Lua table to FFI array (clamped to MAX_CIPHERS).
 -- Separate function gives JIT a clean trace boundary.
 local function copy_ciphers(ciphers, arr)
     local n = #ciphers
-    if n > CIPHER_CAP then n = CIPHER_CAP end
+    if n > MAX_CIPHERS then n = MAX_CIPHERS end
     for i = 1, n do
         arr[i - 1] = ciphers[i]
     end
     return n
 end
 
--- Copy extension uint16 values to FFI array, excluding SNI (0x0000) and ALPN (0x0010).
--- Separate function eliminates JIT abort ("leaving loop in root trace").
+-- Copy extension uint16 values to FFI array (clamped to MAX_EXTENSIONS), excluding
+-- SNI (0x0000) and ALPN (0x0010). Separate function eliminates a JIT abort.
 local function filter_extensions_u16(extensions, arr)
     local n = 0
     for i = 1, #extensions do
         local ext = extensions[i]
         if ext ~= 0x0000 and ext ~= 0x0010 then
-            if n >= CIPHER_CAP then break end
+            if n >= MAX_EXTENSIONS then break end
             arr[n] = ext
             n = n + 1
         end
     end
     return n
-end
-
--- Extract cipher suite IDs via OpenSSL FFI (GREASE filtered).
-local function get_ciphers_ffi(ssl_ptr)
-    local nbytes = C.SSL_client_hello_get0_ciphers(ssl_ptr, ciphers_out_ptr)
-    if nbytes == 0 then return {} end
-    local ptr = ciphers_out_ptr[0]
-    local count = tonumber(nbytes) / 2
-    local ciphers = new_tab(count, 0)
-    local n = 0
-    for i = 0, count - 1 do
-        local val = lshift(ptr[i * 2], 8) + ptr[i * 2 + 1]  -- big-endian
-        if not is_grease(val) then
-            n = n + 1
-            ciphers[n] = val
-        end
-    end
-    return ciphers
-end
-
--- Extract extension type IDs via OpenSSL FFI (GREASE filtered).
-local function get_extensions_ffi(ssl_ptr)
-    local rc = C.SSL_client_hello_get1_extensions_present(ssl_ptr, ext_out_ptr, ext_len_ptr)
-    if rc ~= 1 then return {} end
-    local ext_arr = ext_out_ptr[0]
-    local ext_count = tonumber(ext_len_ptr[0])
-    local extensions = new_tab(ext_count, 0)
-    local n = 0
-    for i = 0, ext_count - 1 do
-        local val = ext_arr[i]
-        if not is_grease(val) then
-            n = n + 1
-            extensions[n] = val
-        end
-    end
-    C.CRYPTO_free(ext_arr, "", 0)
-    return extensions
 end
 
 -- Build JA4 fingerprint from pre-extracted data.
@@ -138,8 +102,21 @@ function _M.build(data)
         return nil, "no data"
     end
 
-    local cipher_count = math_min(#data.ciphers, 99)
-    local ext_count = math_min(#data.extensions, 99)
+    local raw_cipher_n = #data.ciphers
+    local raw_ext_n = #data.extensions
+    local cipher_count = math_min(raw_cipher_n, 99)
+    local ext_count = math_min(raw_ext_n, 99)
+    if raw_cipher_n > MAX_CIPHERS then
+        ngx_log(ngx_WARN, "ja4: ciphers truncated ", raw_cipher_n, "->", MAX_CIPHERS)
+    end
+    if raw_ext_n > MAX_EXTENSIONS then
+        ngx_log(ngx_WARN, "ja4: extensions truncated ", raw_ext_n, "->", MAX_EXTENSIONS)
+    end
+    local sig_n = data.sig_algs and #data.sig_algs or 0
+    if sig_n > MAX_SIG_ALGS then
+        ngx_log(ngx_WARN, "ja4: sig_algs truncated ", sig_n, "->", MAX_SIG_ALGS)
+        sig_n = MAX_SIG_ALGS
+    end
 
     -- Section A: 10 bytes directly into out_buf via byte writes + NUM2 lookup
     out_buf[0] = byte(data.protocol)
@@ -177,11 +154,11 @@ function _M.build(data)
 
         -- Section C: sorted exts + sig_algs -> csv_buf -> SHA256 -> 12 hex bytes
         local sc_len = write_u16_hex_csv(ext_u16, ext_n, csv_buf, 0, CSV_BUF_SIZE)
-        if data.sig_algs and #data.sig_algs > 0 and sc_len < CSV_BUF_SIZE then
+        if sig_n > 0 and sc_len < CSV_BUF_SIZE then
             csv_buf[sc_len] = 0x5F  -- '_'
-            sc_len = write_hex4_csv_at(data.sig_algs, #data.sig_algs, csv_buf, sc_len + 1, CSV_BUF_SIZE)
+            sc_len = write_hex4_csv_at(data.sig_algs, sig_n, csv_buf, sc_len + 1, CSV_BUF_SIZE)
         end
-        if ext_n == 0 and (not data.sig_algs or #data.sig_algs == 0) then
+        if ext_n == 0 and sig_n == 0 then
             ffi_copy(out_buf + pos, EMPTY_HASH, 12)
         else
             sha256_to_buf(csv_buf, sc_len, out_buf, pos)
@@ -191,13 +168,13 @@ function _M.build(data)
         -- Section B raw: hex CSV directly into out_buf
         pos = write_u16_hex_csv(cipher_u16, cn, out_buf, pos, OUT_BUF_SIZE)
 
-        out_buf[pos] = 0x5F; pos = pos + 1
+        if pos < OUT_BUF_SIZE then out_buf[pos] = 0x5F; pos = pos + 1 end
 
         -- Section C raw: exts CSV + '_' + sig_algs CSV
         pos = write_u16_hex_csv(ext_u16, ext_n, out_buf, pos, OUT_BUF_SIZE)
-        if data.sig_algs and #data.sig_algs > 0 and pos < OUT_BUF_SIZE then
+        if sig_n > 0 and pos < OUT_BUF_SIZE then
             out_buf[pos] = 0x5F; pos = pos + 1
-            pos = write_hex4_csv_at(data.sig_algs, #data.sig_algs, out_buf, pos, OUT_BUF_SIZE)
+            pos = write_hex4_csv_at(data.sig_algs, sig_n, out_buf, pos, OUT_BUF_SIZE)
         end
     end
 
@@ -235,6 +212,10 @@ function _M.compute()
     if not ok_ssl then
         return nil, "ngx.ssl not available"
     end
+    if not _have_getters then
+        return nil, "ja4.compute requires OpenResty >= 1.29.2.1 "
+            .. "(ngx.ssl.clienthello cipher/extension getters)"
+    end
     local ssl_ptr, err = ngx_ssl.get_req_ssl_pointer()
     if not ssl_ptr then
         return nil, "failed to get SSL pointer: " .. (err or "unknown")
@@ -269,11 +250,12 @@ function _M.compute()
     local sni_name = ssl_clt.get_client_hello_server_name()
     local sni = sni_name and "d" or "i"
 
-    -- Ciphers (GREASE filtered by get_ciphers_ffi)
-    local ciphers = get_ciphers_ffi(ssl_ptr)
+    -- Ciphers: official getter (GREASE filtered, platform-capped at 128, no manual free)
+    local ciphers = ssl_clt.get_client_hello_ciphers() or {}
 
-    -- Extensions (GREASE filtered by get_extensions_ffi)
-    local extensions = get_extensions_ffi(ssl_ptr)
+    -- Extensions: official getter (GREASE filtered, pool-allocated, no manual free);
+    -- includes SNI/ALPN, which build() counts in section A and excludes from the hash.
+    local extensions = ssl_clt.get_client_hello_ext_present() or {}
 
     -- ALPN: parse raw extension type 16
     local alpn_raw = ssl_clt.get_client_hello_ext(16)

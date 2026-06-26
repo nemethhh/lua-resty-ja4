@@ -2,7 +2,7 @@ use Test::Nginx::Socket::Lua;
 use Cwd qw(cwd);
 
 repeat_each(1);
-plan tests => repeat_each() * 2 * 23;
+plan tests => repeat_each() * 2 * 24;
 
 no_shuffle();
 
@@ -415,3 +415,18 @@ len: 1
 name2: a
 nil: 0
 empty: 0
+
+=== TEST 24: parse_sig_algs filters GREASE values
+--- http_config eval: $::HttpConfig
+--- lua_code
+local utils = require "resty.ja4.utils"
+-- list_len=6: 0403, 0a0a (GREASE), 0804 -> GREASE entry dropped
+local raw = "\x00\x06\x04\x03\x0a\x0a\x08\x04"
+local algs = utils.parse_sig_algs(raw)
+ngx.say(table.concat(algs, ","))
+-- all-GREASE list -> nil
+local all_grease = utils.parse_sig_algs("\x00\x02\x1a\x1a")
+ngx.say(all_grease == nil and "nil" or "notnil")
+--- response_body
+0403,0804
+nil

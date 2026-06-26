@@ -1,7 +1,7 @@
 # Bounds Hardening + ABI Migration Design
 
 **Date:** 2026-06-26
-**Scope:** Eliminate remotely-triggerable FFI buffer overflows and an O(n²) sort DoS; migrate the JA4 TLS path from hand-rolled OpenSSL FFI to the official `ngx.ssl.clienthello` getters.
+**Scope:** Eliminate remotely-triggerable FFI buffer overflows and an O(n²) sort DoS; migrate the JA4 TLS path from hand-rolled OpenSSL FFI to the official `ngx.ssl.clienthello` getters (minimum OpenResty 1.29.2.1).
 
 ## Problem
 
@@ -36,7 +36,9 @@ the request body) defects result:
 Verified against the bundled reference sources in `docs/`:
 
 - **Official clienthello getters exist and are safe** (introduced lua-resty-core 0.1.32,
-  May 2025; confirmed present at the bundled tag `v0.1.34rc3`):
+  May 2025). Verified present at `v0.1.32R1` (bundled by OpenResty **1.29.2.1**),
+  `v0.1.34rc2` (1.29.2.5), and `v0.1.34rc3` (1.31.1.1). OpenResty 1.27.x bundles a
+  pre-0.1.32 lua-resty-core and does **not** have them:
   - `clienthello.get_client_hello_ciphers()` (`clienthello.lua:184`) — GREASE-filtered;
     the C layer caps at the caller's buffer size and **truncates safely**
     (`ciphers_cnt > ciphers_size ? ciphers_size : ciphers_cnt`,
@@ -57,8 +59,9 @@ Verified against the bundled reference sources in `docs/`:
 
 ## Decisions
 
-1. **Adopt the official `ngx.ssl.clienthello` API; minimum OpenResty floor becomes 1.31.**
-   Drops the 1.27 support claim. The getters did not exist in 1.27.
+1. **Adopt the official `ngx.ssl.clienthello` API; minimum OpenResty floor becomes
+   1.29.2.1.** Drops only the 1.27 support claim — 1.29.2.1 bundles lua-resty-core
+   0.1.32R1, which has the getters (verified). The getters did not exist in 1.27.
 2. **Overflow behavior: clamp + warn.** Over-cap inputs are truncated to a deterministic,
    bounded fingerprint and a single `ngx.log(ngx.WARN, ...)` is emitted. The request never
    fails. This mirrors the platform's own cipher behavior (cap 128, silent truncate) and
@@ -90,6 +93,8 @@ arithmetic) so the relationship is explicit and reviewable.
 - **Delete** the cdefs and pointers for `SSL_client_hello_get0_ciphers`,
   `SSL_client_hello_get1_extensions_present`, `CRYPTO_free`, and
   `ciphers_out_ptr`/`ext_out_ptr`/`ext_len_ptr`.
+- **ABI smoke / floor enforcement:** at load, assert the getters resolve; fail fast with
+  a message naming the **1.29.2.1** floor if absent.
 - **Keep** one raw symbol: `SSL_client_hello_get0_legacy_version` (read-only, no
   allocation) for the TLS-1.2-only version fallback — no official wrapper exists.
   `get_req_ssl_pointer()` is retained solely to feed that single call.
@@ -135,15 +140,14 @@ inputs (≤128) keep them O(n²)-but-tiny and JIT-friendly.
 - **e2e:** a scapy ClientHello (`e2e/scapy_tls_client.py`) with >128 ciphers and many
   extensions → worker stays up, returns a valid JA4 header.
 - **ABI smoke:** at module load, assert `clienthello.get_client_hello_ciphers` and
-  `get_client_hello_ext_present` resolve; fail fast with a clear message naming the 1.31
-  floor if absent.
+  `get_client_hello_ext_present` resolve; fail fast with a clear message naming the
+  1.29.2.1 floor if absent.
 
 ## Migration / docs
 
-- README requirements: minimum OpenResty **1.31**; note reliance on the official
-  clienthello getters. Drop the 1.27 / 1.29 "tested against" claims (or re-verify 1.29.2.x
-  bundles lua-resty-core ≥ 0.1.32 before keeping it).
-- CI matrix: target 1.31; drop 1.27.
+- README requirements: minimum OpenResty **1.29.2.1**; note reliance on the official
+  clienthello getters. Drop the 1.27 "tested against" claim; keep 1.29 and 1.31.
+- CI matrix: drop 1.27; keep 1.29.2.x and 1.31.
 
 ## Out of scope
 

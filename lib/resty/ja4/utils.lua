@@ -24,6 +24,14 @@ local _M = {}
 _M.new_tab = new_tab
 _M.EMPTY_HASH = "000000000000"
 
+-- Per-field safety caps. Real clients are far below these; pathological or
+-- malicious inputs are clamped to a deterministic, bounded fingerprint.
+_M.MAX_CIPHERS    = 128   -- matches the platform ngx.ssl.clienthello getter
+_M.MAX_EXTENSIONS = 128
+_M.MAX_SIG_ALGS   = 128
+_M.MAX_HEADERS    = 100   -- nginx NGX_HTTP_LUA_MAX_HEADERS default
+_M.MAX_COOKIES    = 128
+
 -- Section 2: Lookup tables
 
 -- HEX4: uint16 → 4-char hex string (INTERNAL, not exported)
@@ -140,14 +148,19 @@ _M.isort_u16 = isort_u16
 -- Section 5: CSV serialization
 
 -- FFI buffer for building comma-separated hex values (ja4 hash inputs).
-local csv_buf = ffi_new("uint8_t[512]")
+-- Worst case section C: 128 exts*5 (640) + '_' + 128 sig_algs*5 (640) = 1281 -> 2048.
+local CSV_BUF_SIZE = 2048
+local csv_buf = ffi_new("uint8_t[" .. CSV_BUF_SIZE .. "]")
 _M.csv_buf = csv_buf
+_M.CSV_BUF_SIZE = CSV_BUF_SIZE
 
 -- Write uint16 FFI array as comma-separated 4-char hex into buf at offset.
-local function write_u16_hex_csv(arr, n, buf, offset)
+-- Stops before exceeding `cap` bytes if cap is given (backstop; sizing prevents this).
+local function write_u16_hex_csv(arr, n, buf, offset, cap)
     if n == 0 then return offset end
     local pos = offset
     for i = 0, n - 1 do
+        if cap and pos + 5 > cap then break end
         if i > 0 then
             buf[pos] = 0x2C  -- ','
             pos = pos + 1
@@ -164,9 +177,10 @@ end
 _M.write_u16_hex_csv = write_u16_hex_csv
 
 -- Write array of 4-char hex strings as CSV into arbitrary buffer at pos.
-local function write_hex4_csv_at(hex_array, n, buf, pos)
+local function write_hex4_csv_at(hex_array, n, buf, pos, cap)
     if n == 0 then return pos end
     for i = 1, n do
+        if cap and pos + 5 > cap then break end
         if i > 1 then
             buf[pos] = 0x2C  -- ','
             pos = pos + 1
@@ -183,15 +197,17 @@ end
 _M.write_hex4_csv_at = write_hex4_csv_at
 
 -- Write array of variable-length Lua strings as CSV into buffer at pos.
-local function write_str_csv_at(str_array, n, buf, pos)
+local function write_str_csv_at(str_array, n, buf, pos, cap)
     if n == 0 then return pos end
     for i = 1, n do
+        local s = str_array[i]
+        local slen = #s
+        local need = (i > 1 and 1 or 0) + slen
+        if cap and pos + need > cap then break end
         if i > 1 then
             buf[pos] = 0x2C  -- ','
             pos = pos + 1
         end
-        local s = str_array[i]
-        local slen = #s
         ffi_copy(buf + pos, s, slen)
         pos = pos + slen
     end
@@ -297,13 +313,14 @@ function _M.parse_accept_language(lang)
     return char(b1, b2, b3, b4)
 end
 
-function _M.parse_cookies_into(cookie_str, names, pairs_list)
+function _M.parse_cookies_into(cookie_str, names, pairs_list, max_cookies)
     if not cookie_str or cookie_str == "" then
         for i = 1, #names do names[i] = nil end
         for i = 1, #pairs_list do pairs_list[i] = nil end
         return 0
     end
     local n = 0
+    local truncated = false
     local len = #cookie_str
     local pos = 1
     while pos <= len do
@@ -311,6 +328,10 @@ function _M.parse_cookies_into(cookie_str, names, pairs_list)
             pos = pos + 1
         end
         if pos > len then break end
+        if max_cookies and n >= max_cookies then
+            truncated = true
+            break
+        end
         local semi = str_find(cookie_str, "; ", pos, true)
         local seg_end = semi and (semi - 1) or len
         while seg_end >= pos and byte(cookie_str, seg_end) == 0x20 do
@@ -336,7 +357,7 @@ function _M.parse_cookies_into(cookie_str, names, pairs_list)
     for i = n + 1, old_len do names[i] = nil end
     old_len = #pairs_list
     for i = n + 1, old_len do pairs_list[i] = nil end
-    return n
+    return n, truncated
 end
 
 function _M.parse_raw_header_names(raw)

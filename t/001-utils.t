@@ -2,7 +2,7 @@ use Test::Nginx::Socket::Lua;
 use Cwd qw(cwd);
 
 repeat_each(1);
-plan tests => repeat_each() * 2 * 23;
+plan tests => repeat_each() * 2 * 26;
 
 no_shuffle();
 
@@ -415,3 +415,42 @@ len: 1
 name2: a
 nil: 0
 empty: 0
+
+=== TEST: write_u16_hex_csv respects cap (no overflow)
+--- http_config eval: $::HttpConfig
+--- lua_code
+local ffi = require "ffi"
+local utils = require "resty.ja4.utils"
+local buf = ffi.new("uint8_t[16]")
+local arr = ffi.new("uint16_t[10]")
+for i = 0, 9 do arr[i] = 0x1234 end
+local pos = utils.write_u16_hex_csv(arr, 10, buf, 0, 16)
+ngx.say("within_cap: ", tostring(pos <= 16))
+--- response_body
+within_cap: true
+
+=== TEST: write_str_csv_at respects cap (no overflow)
+--- http_config eval: $::HttpConfig
+--- lua_code
+local ffi = require "ffi"
+local utils = require "resty.ja4.utils"
+local buf = ffi.new("uint8_t[16]")
+local arr = {}
+for i = 1, 20 do arr[i] = "longheadername" end
+local pos = utils.write_str_csv_at(arr, 20, buf, 0, 16)
+ngx.say("within_cap: ", tostring(pos <= 16))
+--- response_body
+within_cap: true
+
+=== TEST: parse_cookies_into caps cookie count and reports truncation
+--- http_config eval: $::HttpConfig
+--- lua_code
+local utils = require "resty.ja4.utils"
+local names, pairs_list = {}, {}
+local parts = {}
+for i = 1, 300 do parts[i] = "k" .. i .. "=v" end
+local cookie_str = table.concat(parts, "; ")
+local n, truncated = utils.parse_cookies_into(cookie_str, names, pairs_list, 128)
+ngx.say("n: ", n, " truncated: ", tostring(truncated))
+--- response_body
+n: 128 truncated: true

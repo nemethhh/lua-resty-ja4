@@ -2,7 +2,7 @@ use Test::Nginx::Socket::Lua;
 use Cwd qw(cwd);
 
 repeat_each(1);
-plan tests => repeat_each() * 2 * 18;
+plan tests => repeat_each() * (2 * 18 + 6);
 
 no_shuffle();
 
@@ -317,3 +317,41 @@ ngx.say("hashed: ", hashed)
 --- response_body
 raw: he11nn05enus_Host,Connection,User-Agent,Accept-Encoding,Accept-Language__
 hashed: he11nn05enus_6f8992deff94_000000000000_000000000000
+
+=== TEST: JA4H clamps oversized headers/cookies and warns
+--- http_config eval: $::HttpConfig
+--- lua_code
+local ja4h = require "resty.ja4h"
+local names = {}
+for i = 1, 200 do names[i] = "X-H-" .. i end
+local parts = {}
+for i = 1, 300 do parts[i] = "ck" .. i .. "=v" end
+local cookie_str = table.concat(parts, "; ")
+local result = ja4h.build({
+    method = "GET", version = "20",
+    has_cookie = true, has_referer = false,
+    header_names = names, accept_language = nil, cookie_str = cookie_str,
+})
+ngx.say("len: ", #result, " hc: ", result:sub(7, 8))
+--- response_body
+len: 51 hc: 99
+--- error_log
+ja4: header_names truncated 200->100
+ja4: cookies truncated to 256
+
+=== TEST: JA4H raw mode exact-fill does not overflow out_buf
+--- http_config eval: $::HttpConfig
+--- lua_code
+local ja4h = require "resty.ja4h"
+ja4h.configure({ hash = false })
+local name = string.rep("h", 4092)
+local names = { name, name, name, name }
+local result = ja4h.build({
+    method = "GET", version = "20",
+    has_cookie = false, has_referer = false,
+    header_names = names, accept_language = nil, cookie_str = nil,
+})
+ja4h.configure({ hash = true })
+ngx.say("ok: ", tostring(result ~= nil and #result > 0 and #result <= 16384))
+--- response_body
+ok: true

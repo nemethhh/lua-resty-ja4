@@ -24,6 +24,16 @@ local _M = {}
 _M.new_tab = new_tab
 _M.EMPTY_HASH = "000000000000"
 
+-- Per-field safety caps. Real clients sit far below these; pathological or
+-- malicious inputs are clamped to a deterministic, bounded fingerprint (and the
+-- caller emits one ngx.log(WARN)). The caps also bound the O(n^2) insertion
+-- sorts, so an attacker cannot force quadratic CPU with a huge cipher/cookie list.
+_M.MAX_CIPHERS    = 256   -- a ClientHello can carry more; 256 keeps real-client fidelity
+_M.MAX_EXTENSIONS = 256
+_M.MAX_SIG_ALGS   = 256
+_M.MAX_HEADERS    = 100   -- matches nginx NGX_HTTP_LUA_MAX_HEADERS (the FFI fetch cap)
+_M.MAX_COOKIES    = 256
+
 -- Section 2: Lookup tables
 
 -- HEX4: uint16 → 4-char hex string (INTERNAL, not exported)
@@ -140,8 +150,9 @@ _M.isort_u16 = isort_u16
 -- Section 5: CSV serialization
 
 -- FFI buffer for building comma-separated hex values (ja4 hash inputs).
--- Sized to hold the clamped cipher/extension lists (<=256 entries * 5 bytes).
-local CSV_BUF_SIZE = 2048
+-- Section C concatenates up to MAX_EXTENSIONS + MAX_SIG_ALGS entries (256 each):
+-- 256*5 + 1 + 256*5 ~= 2561 bytes. 4096 holds it; the writers bound it regardless.
+local CSV_BUF_SIZE = 4096
 local csv_buf = ffi_new("uint8_t[" .. CSV_BUF_SIZE .. "]")
 _M.csv_buf = csv_buf
 _M.CSV_BUF_SIZE = CSV_BUF_SIZE
@@ -323,13 +334,14 @@ function _M.parse_accept_language(lang)
     return char(b1, b2, b3, b4)
 end
 
-function _M.parse_cookies_into(cookie_str, names, pairs_list)
+function _M.parse_cookies_into(cookie_str, names, pairs_list, max_cookies)
     if not cookie_str or cookie_str == "" then
         for i = 1, #names do names[i] = nil end
         for i = 1, #pairs_list do pairs_list[i] = nil end
-        return 0
+        return 0, false
     end
     local n = 0
+    local truncated = false
     local len = #cookie_str
     local pos = 1
     while pos <= len do
@@ -337,6 +349,10 @@ function _M.parse_cookies_into(cookie_str, names, pairs_list)
             pos = pos + 1
         end
         if pos > len then break end
+        if max_cookies and n >= max_cookies then
+            truncated = true
+            break
+        end
         local semi = str_find(cookie_str, "; ", pos, true)
         local seg_end = semi and (semi - 1) or len
         while seg_end >= pos and byte(cookie_str, seg_end) == 0x20 do
@@ -362,7 +378,7 @@ function _M.parse_cookies_into(cookie_str, names, pairs_list)
     for i = n + 1, old_len do names[i] = nil end
     old_len = #pairs_list
     for i = n + 1, old_len do pairs_list[i] = nil end
-    return n
+    return n, truncated
 end
 
 function _M.parse_raw_header_names(raw)

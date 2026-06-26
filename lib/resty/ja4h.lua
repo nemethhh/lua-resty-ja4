@@ -32,6 +32,10 @@ local sha256_to_buf = utils.sha256_to_buf
 local write_str_csv_at = utils.write_str_csv_at
 local NUM2 = utils.NUM2
 local ngx = ngx
+local MAX_HEADERS = utils.MAX_HEADERS
+local MAX_COOKIES = utils.MAX_COOKIES
+local ngx_log = ngx.log
+local ngx_WARN = ngx.WARN
 
 local _cookie_names = new_tab(100, 0)
 local _cookie_pairs = new_tab(100, 0)
@@ -182,7 +186,12 @@ function _M.build(data)
         end
     end
 
-    local header_count = math_min(#data.header_names, 99)
+    local raw_header_n = #data.header_names
+    local header_count = math_min(raw_header_n, 99)
+    local hn = math_min(raw_header_n, MAX_HEADERS)
+    if raw_header_n > MAX_HEADERS then
+        ngx_log(ngx_WARN, "ja4: header_names truncated ", raw_header_n, "->", MAX_HEADERS)
+    end
     local cookie_flag = data.has_cookie and "c" or "n"
     local referer_flag = data.has_referer and "r" or "n"
     local lang = utils.parse_accept_language(data.accept_language)
@@ -203,10 +212,10 @@ function _M.build(data)
 
     if _hash_mode then
         -- Section B: header names CSV → hash_buf → SHA256 → 12 hex to out_buf
-        if #data.header_names == 0 then
+        if hn == 0 then
             ffi_copy(out_buf + pos, EMPTY_HASH, 12)
         else
-            local hlen = write_str_csv_at(data.header_names, #data.header_names, hash_buf, 0, BUF_SIZE)
+            local hlen = write_str_csv_at(data.header_names, hn, hash_buf, 0, BUF_SIZE)
             sha256_to_buf(hash_buf, hlen, out_buf, pos)
         end
         pos = pos + 12
@@ -215,7 +224,10 @@ function _M.build(data)
 
         -- Sections C/D: cookie names and pairs
         if data.cookie_str and data.cookie_str ~= "" then
-            local cn = utils.parse_cookies_into(data.cookie_str, _cookie_names, _cookie_pairs)
+            local cn, ck_trunc = utils.parse_cookies_into(data.cookie_str, _cookie_names, _cookie_pairs, MAX_COOKIES)
+            if ck_trunc then
+                ngx_log(ngx_WARN, "ja4: cookies truncated to ", MAX_COOKIES)
+            end
             if cn > 0 then
                 -- Section C: sorted cookie names -> hash
                 isort(_cookie_names, cn)
@@ -246,13 +258,16 @@ function _M.build(data)
         end
     else
         -- Section B raw: header names CSV directly into out_buf
-        pos = write_str_csv_at(data.header_names, #data.header_names, out_buf, pos, BUF_SIZE)
+        pos = write_str_csv_at(data.header_names, hn, out_buf, pos, BUF_SIZE)
 
         if pos < BUF_SIZE then out_buf[pos] = 0x5F; pos = pos + 1 end
 
         -- Sections C/D raw: sorted cookie names, sorted cookie pairs
         if data.cookie_str and data.cookie_str ~= "" then
-            local cn = utils.parse_cookies_into(data.cookie_str, _cookie_names, _cookie_pairs)
+            local cn, ck_trunc = utils.parse_cookies_into(data.cookie_str, _cookie_names, _cookie_pairs, MAX_COOKIES)
+            if ck_trunc then
+                ngx_log(ngx_WARN, "ja4: cookies truncated to ", MAX_COOKIES)
+            end
             if cn > 0 then
                 isort(_cookie_names, cn)
                 pos = write_str_csv_at(_cookie_names, cn, out_buf, pos, BUF_SIZE)

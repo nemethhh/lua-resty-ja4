@@ -105,3 +105,22 @@ def test_ja4_scapy_vectors(ciphers, ext_types, alpn, sig_algs, expected_ja4):
     """Send ClientHello with known browser params, verify JA4 fingerprint."""
     ja4 = connect_and_get_ja4(NGINX_HOST, HASH_PORT, ciphers, ext_types, alpn, sig_algs)
     assert ja4 == expected_ja4
+
+
+def test_ja4_oversized_clienthello_no_crash():
+    """A ClientHello with >128 ciphers must not crash the worker.
+    The platform getter caps ciphers at 128; we assert a valid JA4 hash
+    comes back and (via a second request) that the worker is still alive."""
+    many_ciphers = list(range(0x0001, 0x0001 + 300))  # 300 cipher IDs
+    ja4 = connect_and_get_ja4(
+        NGINX_HOST, HASH_PORT, many_ciphers, [0x002b, 0x000a], "h2", [0x0403]
+    )
+    # hash-mode JA4 is exactly 36 chars; section A cipher count caps at "99"
+    assert ja4 is not None and len(ja4) == 36
+    assert ja4[4:6] == "99"
+
+    # Worker still alive: a normal handshake afterwards still returns a JA4.
+    ja4_after = connect_and_get_ja4(
+        NGINX_HOST, HASH_PORT, [0x1301, 0x1302, 0x1303], [0x002b, 0x000a], "h2", [0x0403]
+    )
+    assert ja4_after is not None and len(ja4_after) == 36

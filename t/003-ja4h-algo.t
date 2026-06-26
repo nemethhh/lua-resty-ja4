@@ -2,7 +2,7 @@ use Test::Nginx::Socket::Lua;
 use Cwd qw(cwd);
 
 repeat_each(1);
-plan tests => repeat_each() * 2 * 18;
+plan tests => repeat_each() * 2 * 21;
 
 no_shuffle();
 
@@ -317,3 +317,38 @@ ngx.say("hashed: ", hashed)
 --- response_body
 raw: he11nn05enus_Host,Connection,User-Agent,Accept-Encoding,Accept-Language__
 hashed: he11nn05enus_6f8992deff94_000000000000_000000000000
+
+=== TEST: JA4H survives 200 header names and warns
+--- http_config eval: $::HttpConfig
+--- lua_code
+local ja4h = require "resty.ja4h"
+local names = {}
+for i = 1, 200 do names[i] = "x-custom-header-" .. i end
+local result = ja4h.build({
+    method = "GET", version = "20",
+    has_cookie = false, has_referer = false,
+    header_names = names, accept_language = nil, cookie_str = nil,
+})
+ngx.say("bounded: ", tostring(#result > 0 and #result < 16384))
+--- response_body
+bounded: true
+--- error_log
+ja4: header_names truncated 200->100
+
+=== TEST: JA4H survives 500 cookies and warns
+--- http_config eval: $::HttpConfig
+--- lua_code
+local ja4h = require "resty.ja4h"
+local parts = {}
+for i = 1, 500 do parts[i] = "k" .. i .. "=" .. string.rep("v", 40) end
+local cookie_str = table.concat(parts, "; ")
+local result = ja4h.build({
+    method = "GET", version = "20",
+    has_cookie = true, has_referer = false,
+    header_names = {"accept"}, accept_language = nil, cookie_str = cookie_str,
+})
+ngx.say("bounded: ", tostring(#result > 0 and #result < 16384))
+--- response_body
+bounded: true
+--- error_log
+ja4: cookies truncated to 128

@@ -41,7 +41,12 @@ from scapy.layers.tls.extensions import TLS_Ext_Unknown
 # they coexist with native extension classes.
 _TLS13_KEEP_FROM_AUTOMATON = {0x0033}
 
-# For TLS 1.2: no automaton extensions need to be kept.
+# For TLS 1.2 and TLS 1.3: keep sig_algs (0x000d) from automaton when the
+# caller's ext_types do not include it.  RFC 8446 §4.2.3 requires
+# signature_algorithms in ClientHello for both TLS 1.2 and 1.3; OpenSSL 3.x
+# will abort with missing_extension if it is absent.
+# key_share (0x0033) is handled separately for TLS 1.3 only.
+_KEEP_FROM_AUTOMATON_IF_MISSING = {0x000d}
 
 # Scapy sig_alg string names for the automaton's supported_signature_algorithms
 _SA_MAP = {
@@ -189,14 +194,28 @@ class _JA4TLSClientAutomaton(TLSClientAutomaton):
             if self._custom_ciphers:
                 pkt.ciphers = self._custom_ciphers
             if self._extra_ext:
+                custom_types = {
+                    getattr(e, 'type', None) for e in self._extra_ext
+                }
                 if isinstance(pkt, TLS13ClientHello):
-                    # Keep only key_share from automaton (has ECDH private key)
+                    # Keep key_share from automaton (has ECDH private key).
+                    # Also keep sig_algs (0x000d) when caller did not supply
+                    # it — RFC 8446 requires signature_algorithms in TLS 1.3
+                    # ClientHello; OpenSSL 3.x aborts without it.
+                    keep_types = _TLS13_KEEP_FROM_AUTOMATON | (
+                        _KEEP_FROM_AUTOMATON_IF_MISSING - custom_types
+                    )
                     kept = [e for e in (pkt.ext or [])
-                            if getattr(e, 'type', None) in _TLS13_KEEP_FROM_AUTOMATON]
+                            if getattr(e, 'type', None) in keep_types]
                     pkt.ext = kept + list(self._extra_ext)
                 else:
-                    # TLS 1.2: replace all automaton extensions with ours
-                    pkt.ext = list(self._extra_ext)
+                    # TLS 1.2: replace automaton extensions with ours, but
+                    # keep sig_algs (0x000d) from automaton when caller didn't
+                    # include it — OpenSSL 3.x requires sig_algs for TLS 1.2.
+                    kept = [e for e in (pkt.ext or [])
+                            if getattr(e, 'type', None) in
+                            _KEEP_FROM_AUTOMATON_IF_MISSING - custom_types]
+                    pkt.ext = kept + list(self._extra_ext)
             self._ch_patched = True
         super().add_msg(pkt)
 
@@ -279,11 +298,26 @@ def _send_h2_request(sock, host):
 
 
 def connect_and_get_ja4(host, port, ciphers, ext_types, alpn, sig_algs):
-    """Connect with exact ClientHello params, return X-JA4 header value."""
-    tls13_ciphers = {0x1301, 0x1302, 0x1303, 0x1304, 0x1305}
-    tls13 = bool(set(ciphers) & tls13_ciphers) or 0x002b in ext_types
+    """Connect with exact ClientHello params, return X-JA4 header value.
 
-    extra_extensions = _build_extensions(ext_types, host, alpn, sig_algs, tls13)
+    Note: when alpn is set but 0x0010 is absent from ext_types, ALPN is
+    auto-injected into the on-wire extensions (so the fingerprint reflects ALPN).
+    """
+    tls13_ciphers = {0x1301, 0x1302, 0x1303, 0x1304, 0x1305}
+    tls13 = bool(set(ciphers) & tls13_ciphers)
+
+    # Ensure ALPN extension is present when alpn is specified.  Without it the
+    # server will not negotiate h2 even though connect_and_get_ja4 then tries
+    # HTTP/2 framing — the TLS layer would be HTTP/1.1 and the h2 request
+    # would fail silently.  When alpn is set but 0x0010 is absent from
+    # ext_types, ALPN is auto-injected into the on-wire extensions (so the
+    # fingerprint reflects ALPN).
+    # (_build_extensions sees 0x0010 in ext_types and builds it normally)
+    effective_ext_types = list(ext_types)
+    if alpn and 0x0010 not in effective_ext_types:
+        effective_ext_types.append(0x0010)
+
+    extra_extensions = _build_extensions(effective_ext_types, host, alpn, sig_algs, tls13)
 
     kw = dict(
         server=host, dport=port,
@@ -293,11 +327,16 @@ def connect_and_get_ja4(host, port, ciphers, ext_types, alpn, sig_algs):
     )
 
     if tls13:
-        sa_names = [_SA_MAP[sa] for sa in sig_algs if sa in _SA_MAP]
-        if not sa_names:
-            sa_names = ["sha256+rsaepss", "sha256+rsa"]
         kw["version"] = "tls13"
-        kw["supported_signature_algorithms"] = sa_names
+        # Only pin the automaton's sig_algs when the caller explicitly
+        # controls them (0x000d in ext_types).  When 0x000d is absent the
+        # automaton keeps its own TLS_Ext_SignatureAlgorithms (with RSA-PSS
+        # variants) so the TLS 1.3 handshake succeeds against RSA certs.
+        if 0x000d in ext_types:
+            sa_names = [_SA_MAP[sa] for sa in sig_algs if sa in _SA_MAP]
+            if not sa_names:
+                sa_names = ["sha256+rsaepss", "sha256+rsa"]
+            kw["supported_signature_algorithms"] = sa_names
 
     sock = _JA4TLSClientAutomaton.tlslink(Raw, **kw)
 

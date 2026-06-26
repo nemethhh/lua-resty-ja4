@@ -2,7 +2,7 @@ use Test::Nginx::Socket::Lua;
 use Cwd qw(cwd);
 
 repeat_each(1);
-plan tests => repeat_each() * 2 * 16;
+plan tests => repeat_each() * (2 * 16 + 5);
 
 no_shuffle();
 
@@ -326,3 +326,23 @@ ngx.say("type: ", type(ja4.compute))
 -- It cannot be integration-tested from content_by_lua_block.
 --- response_body
 type: function
+
+=== TEST: JA4 clamps oversized ciphers/extensions/sig_algs and warns
+--- http_config eval: $::HttpConfig
+--- lua_code
+local ja4 = require "resty.ja4"
+local ciphers, exts, sigs = {}, {}, {}
+for i = 1, 300 do ciphers[i] = 0x0100 + i end
+for i = 1, 300 do exts[i] = 0x0200 + i end  -- none are SNI(0x0000)/ALPN(0x0010)
+for i = 1, 300 do sigs[i] = string.format("%04x", 0x0300 + i) end
+local result = ja4.build({
+    protocol = "t", version = "13", sni = "d",
+    ciphers = ciphers, extensions = exts, alpn = "h2", sig_algs = sigs,
+})
+ngx.say("len: ", #result, " cc: ", result:sub(5, 6), " ec: ", result:sub(7, 8))
+--- response_body
+len: 36 cc: 99 ec: 99
+--- error_log
+ja4: ciphers truncated 300->256
+ja4: extensions truncated 300->256
+ja4: sig_algs truncated 300->256

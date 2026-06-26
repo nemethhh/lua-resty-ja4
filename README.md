@@ -16,16 +16,23 @@ It is implemented with LuaJIT FFI and optimized for low allocation and high thro
 - Raw mode: full sortable CSV sections
 - Direct `build()` APIs when you already have parsed handshake/header data
 - Request-local storage helpers via `ngx.ctx` (`store()` / `get()`)
+- Hardened against pathological inputs: cipher/extension/sig-alg lists are
+  capped at 128, header names at 100, and cookies at 128. Over-cap inputs are
+  truncated to a deterministic fingerprint and logged at `warn`; real clients
+  are unaffected and remain byte-identical to canonical JA4/JA4H.
 
 ## Requirements
 
 - OpenResty with LuaJIT FFI
 - `lua-resty-core` (used by JA4H FFI header extraction path)
-- For live JA4 `compute()`: OpenResty with `ngx.ssl.get_req_ssl_pointer()` available (tested on OpenResty 1.27+)
+- For live JA4 `compute()`: **OpenResty >= 1.29.2.1**, which bundles
+  lua-resty-core >= 0.1.32 (provides `ngx.ssl.clienthello.get_client_hello_ciphers()`
+  and `get_client_hello_ext_present()`). Earlier versions (e.g. 1.27) lack these
+  getters and are not supported.
 
 Tested in this repo against:
-- OpenResty 1.27.1.2
-- OpenResty 1.29.2.1
+- OpenResty 1.29.2.x
+- OpenResty 1.31.1.1
 
 ## Installation
 
@@ -169,7 +176,7 @@ make test
 make test-verbose
 ```
 
-E2E tests (Docker Compose, OpenResty 1.27 and 1.29):
+E2E tests (Docker Compose, OpenResty 1.29.2.x and 1.31.1.1):
 
 ```bash
 make e2e

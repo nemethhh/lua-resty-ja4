@@ -298,15 +298,21 @@ def _send_h2_request(sock, host):
 
 
 def connect_and_get_ja4(host, port, ciphers, ext_types, alpn, sig_algs):
-    """Connect with exact ClientHello params, return X-JA4 header value."""
+    """Connect with exact ClientHello params, return X-JA4 header value.
+
+    Note: when alpn is set but 0x0010 is absent from ext_types, ALPN is
+    auto-injected into the on-wire extensions (so the fingerprint reflects ALPN).
+    """
     tls13_ciphers = {0x1301, 0x1302, 0x1303, 0x1304, 0x1305}
     tls13 = bool(set(ciphers) & tls13_ciphers)
 
     # Ensure ALPN extension is present when alpn is specified.  Without it the
     # server will not negotiate h2 even though connect_and_get_ja4 then tries
     # HTTP/2 framing — the TLS layer would be HTTP/1.1 and the h2 request
-    # would fail silently.  Callers that already include 0x0010 in ext_types
-    # are unaffected (_build_extensions skips duplicates via the etype loop).
+    # would fail silently.  When alpn is set but 0x0010 is absent from
+    # ext_types, ALPN is auto-injected into the on-wire extensions (so the
+    # fingerprint reflects ALPN).
+    # (_build_extensions sees 0x0010 in ext_types and builds it normally)
     effective_ext_types = list(ext_types)
     if alpn and 0x0010 not in effective_ext_types:
         effective_ext_types.append(0x0010)

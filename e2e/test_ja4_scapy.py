@@ -12,6 +12,7 @@ reflect what OpenSSL actually reports, not the full wire-level ClientHello.
 Vectors without unrecognized extensions match ja4db.com reference values exactly.
 """
 import os
+import time
 import pytest
 from scapy_tls_client import connect_and_get_ja4
 
@@ -118,6 +119,8 @@ def test_ja4_oversized_clienthello_no_crash():
     # hash-mode JA4 is exactly 36 chars; section A cipher count caps at "99"
     assert ja4 is not None and len(ja4) == 36
     assert ja4[4:6] == "99"
+
+    time.sleep(0.1)  # let any crashed worker stay down so the survival check is meaningful
 
     # Worker still alive: a normal handshake afterwards still returns a JA4.
     ja4_after = connect_and_get_ja4(

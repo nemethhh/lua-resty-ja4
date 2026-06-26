@@ -3,7 +3,6 @@ local ffi_new = ffi.new
 local ffi_string = ffi.string
 local ffi_copy = ffi.copy
 local C = ffi.C
-local bit = require "bit"
 local byte = string.byte
 local tonumber = tonumber
 local math_min = math.min
@@ -25,8 +24,8 @@ local ngx_WARN = ngx.WARN
 
 local cipher_u16 = ffi_new("uint16_t[" .. MAX_CIPHERS .. "]")
 local ext_u16 = ffi_new("uint16_t[" .. MAX_EXTENSIONS .. "]")
--- Raw mode worst case: 10 (section_a) + 1 + 640 (128 ciphers) + 1 + 640 (128 exts)
--- + 1 + 640 (128 sig_algs) ~= 1934B. Hash mode: fixed 36B. 4096B covers all cases.
+-- Raw mode worst case: 10 (section_a) + 1 + 639 (128 ciphers) + 1 + 639 (128 exts)
+-- + 1 + 639 (128 sig_algs) ~= 1930B. Hash mode: fixed 36B. 4096B covers all cases.
 local OUT_BUF_SIZE = 4096
 local out_buf = ffi_new("uint8_t[" .. OUT_BUF_SIZE .. "]")
 
@@ -163,12 +162,12 @@ function _M.build(data)
         -- Section B raw: hex CSV directly into out_buf
         pos = write_u16_hex_csv(cipher_u16, cn, out_buf, pos, OUT_BUF_SIZE)
 
-        out_buf[pos] = 0x5F; pos = pos + 1
+        if pos < OUT_BUF_SIZE then out_buf[pos] = 0x5F; pos = pos + 1 end
 
         -- Section C raw: exts CSV + '_' + sig_algs CSV
         pos = write_u16_hex_csv(ext_u16, ext_n, out_buf, pos, OUT_BUF_SIZE)
         if sig_n > 0 then
-            out_buf[pos] = 0x5F; pos = pos + 1
+            if pos < OUT_BUF_SIZE then out_buf[pos] = 0x5F; pos = pos + 1 end
             pos = write_hex4_csv_at(data.sig_algs, sig_n, out_buf, pos, OUT_BUF_SIZE)
         end
     end

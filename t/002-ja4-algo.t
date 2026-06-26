@@ -2,7 +2,7 @@ use Test::Nginx::Socket::Lua;
 use Cwd qw(cwd);
 
 repeat_each(1);
-plan tests => repeat_each() * 2 * 20;
+plan tests => repeat_each() * 43;
 
 no_shuffle();
 
@@ -376,3 +376,19 @@ ja4.configure({ hash = true })
 ngx.say("bounded: ", tostring(#result < 4096 and #result > 0))
 --- response_body
 bounded: true
+
+=== TEST: JA4 hash mode survives 200 sig_algs and warns
+--- http_config eval: $::HttpConfig
+--- lua_code
+local ja4 = require "resty.ja4"
+local sig = {}
+for i = 1, 200 do sig[i] = string.format("%04x", i) end
+local result = ja4.build({
+    protocol = "t", version = "13", sni = "d",
+    ciphers = {0x1301}, extensions = {0x000a}, alpn = "h2", sig_algs = sig,
+})
+ngx.say("len: ", #result)
+--- response_body
+len: 36
+--- error_log
+ja4: sig_algs truncated 200->128

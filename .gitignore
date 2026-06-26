@@ -1,3 +1,6 @@
 .worktrees/
 bench/reports/*
 .secrets
+
+# SDD scratch (briefs, reports, ledger, diffs)
+.superpowers/

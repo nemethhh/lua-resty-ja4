@@ -2,7 +2,7 @@ use Test::Nginx::Socket::Lua;
 use Cwd qw(cwd);
 
 repeat_each(1);
-plan tests => repeat_each() * 2 * 21;
+plan tests => repeat_each() * 2 * 22;
 
 no_shuffle();
 
@@ -352,3 +352,20 @@ ngx.say("bounded: ", tostring(#result > 0 and #result < 16384))
 bounded: true
 --- error_log
 ja4: cookies truncated to 128
+
+=== TEST: JA4H raw mode exact-fill does not overflow out_buf
+--- http_config eval: $::HttpConfig
+--- lua_code
+local ja4h = require "resty.ja4h"
+ja4h.configure({ hash = false })
+local name = string.rep("h", 4092)
+local names = { name, name, name, name }
+local result = ja4h.build({
+    method = "GET", version = "20",
+    has_cookie = false, has_referer = false,
+    header_names = names, accept_language = nil, cookie_str = nil,
+})
+ja4h.configure({ hash = true })
+ngx.say("ok: ", tostring(result ~= nil and #result > 0))
+--- response_body
+ok: true

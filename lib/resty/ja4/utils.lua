@@ -148,7 +148,7 @@ _M.isort_u16 = isort_u16
 -- Section 5: CSV serialization
 
 -- FFI buffer for building comma-separated hex values (ja4 hash inputs).
--- Worst case section C: 128 exts*5 (640) + '_' + 128 sig_algs*5 (640) = 1281 -> 2048.
+-- Worst case section C: 128 exts*5-1 (639) + '_' + 128 sig_algs*5-1 (639) = 1279 -> 2048.
 local CSV_BUF_SIZE = 2048
 local csv_buf = ffi_new("uint8_t[" .. CSV_BUF_SIZE .. "]")
 _M.csv_buf = csv_buf

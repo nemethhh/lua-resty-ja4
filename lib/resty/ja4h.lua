@@ -257,7 +257,7 @@ function _M.build(data)
         -- Section B raw: header names CSV directly into out_buf
         pos = write_str_csv_at(data.header_names, hn, out_buf, pos, BUF_SIZE)
 
-        out_buf[pos] = 0x5F; pos = pos + 1
+        if pos < BUF_SIZE then out_buf[pos] = 0x5F; pos = pos + 1 end
 
         -- Sections C/D raw: sorted cookie names, sorted cookie pairs
         if data.cookie_str and data.cookie_str ~= "" then
@@ -269,17 +269,17 @@ function _M.build(data)
                 isort(_cookie_names, cn)
                 pos = write_str_csv_at(_cookie_names, cn, out_buf, pos, BUF_SIZE)
 
-                out_buf[pos] = 0x5F; pos = pos + 1
+                if pos < BUF_SIZE then out_buf[pos] = 0x5F; pos = pos + 1 end
 
                 isort(_cookie_pairs, cn)
                 pos = write_str_csv_at(_cookie_pairs, cn, out_buf, pos, BUF_SIZE)
             else
                 -- Empty section C, separator, empty section D
-                out_buf[pos] = 0x5F; pos = pos + 1
+                if pos < BUF_SIZE then out_buf[pos] = 0x5F; pos = pos + 1 end
             end
         else
             -- Empty section C, separator, empty section D
-            out_buf[pos] = 0x5F; pos = pos + 1
+            if pos < BUF_SIZE then out_buf[pos] = 0x5F; pos = pos + 1 end
         end
     end
 

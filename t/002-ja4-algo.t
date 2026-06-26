@@ -2,7 +2,7 @@ use Test::Nginx::Socket::Lua;
 use Cwd qw(cwd);
 
 repeat_each(1);
-plan tests => repeat_each() * 2 * 16;
+plan tests => repeat_each() * 2 * 20;
 
 no_shuffle();
 
@@ -326,3 +326,53 @@ ngx.say("type: ", type(ja4.compute))
 -- It cannot be integration-tested from content_by_lua_block.
 --- response_body
 type: function
+
+=== TEST: JA4 hash mode survives 200 ciphers and warns
+--- http_config eval: $::HttpConfig
+--- lua_code
+local ja4 = require "resty.ja4"
+local ciphers = {}
+for i = 1, 200 do ciphers[i] = i end
+local result = ja4.build({
+    protocol = "t", version = "13", sni = "d",
+    ciphers = ciphers, extensions = {0x000a}, alpn = "h2", sig_algs = nil,
+})
+ngx.say("cc: ", result:sub(5, 6))
+ngx.say("len: ", #result)
+--- response_body
+cc: 99
+len: 36
+--- error_log
+ja4: ciphers truncated 200->128
+
+=== TEST: JA4 hash mode survives 200 extensions and warns
+--- http_config eval: $::HttpConfig
+--- lua_code
+local ja4 = require "resty.ja4"
+local extensions = {}
+for i = 1, 200 do extensions[i] = i + 0x0100 end
+local result = ja4.build({
+    protocol = "t", version = "13", sni = "d",
+    ciphers = {0x1301}, extensions = extensions, alpn = "h2", sig_algs = nil,
+})
+ngx.say("len: ", #result)
+--- response_body
+len: 36
+--- error_log
+ja4: extensions truncated 200->128
+
+=== TEST: JA4 raw mode survives 300 ciphers without overflow
+--- http_config eval: $::HttpConfig
+--- lua_code
+local ja4 = require "resty.ja4"
+ja4.configure({ hash = false })
+local ciphers = {}
+for i = 1, 300 do ciphers[i] = i end
+local result = ja4.build({
+    protocol = "t", version = "13", sni = "d",
+    ciphers = ciphers, extensions = {0x000a}, alpn = "h2", sig_algs = nil,
+})
+ja4.configure({ hash = true })
+ngx.say("bounded: ", tostring(#result < 4096 and #result > 0))
+--- response_body
+bounded: true

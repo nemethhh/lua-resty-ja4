@@ -19,12 +19,19 @@ local write_hex4_csv_at = utils.write_hex4_csv_at
 local sha256_to_buf = utils.sha256_to_buf
 local EMPTY_HASH = utils.EMPTY_HASH
 local NUM2 = utils.NUM2
+local MAX_CIPHERS    = utils.MAX_CIPHERS
+local MAX_EXTENSIONS = utils.MAX_EXTENSIONS
+local MAX_SIG_ALGS   = utils.MAX_SIG_ALGS
+local CSV_BUF_SIZE   = utils.CSV_BUF_SIZE
+local ngx_log = ngx.log
+local ngx_WARN = ngx.WARN
 
-local cipher_u16 = ffi_new("uint16_t[256]")
-local ext_u16 = ffi_new("uint16_t[256]")
--- Raw mode worst case: 10 (section_a) + 1 + 494 (99 ciphers) + 1 + 494 (99 exts)
--- + 1 + ~200 (sig_algs) ≈ 1200B. Hash mode: fixed 36B. 2048B covers all cases.
-local out_buf = ffi_new("uint8_t[2048]")
+local cipher_u16 = ffi_new("uint16_t[" .. MAX_CIPHERS .. "]")
+local ext_u16 = ffi_new("uint16_t[" .. MAX_EXTENSIONS .. "]")
+-- Raw mode worst case: 10 (section_a) + 1 + 640 (128 ciphers) + 1 + 640 (128 exts)
+-- + 1 + 640 (128 sig_algs) ~= 1934B. Hash mode: fixed 36B. 4096B covers all cases.
+local OUT_BUF_SIZE = 4096
+local out_buf = ffi_new("uint8_t[" .. OUT_BUF_SIZE .. "]")
 
 -- Load ssl.clienthello once at module load (not per-call).
 -- pcall here handles non-SSL or non-OpenResty environments gracefully.
@@ -54,21 +61,24 @@ function _M.configure(opts)
     end
 end
 
--- Copy cipher uint16 values from Lua table to FFI array.
+-- Copy cipher uint16 values from Lua table to FFI array (clamped to cap).
 -- Separate function gives JIT a clean trace boundary.
-local function copy_ciphers(ciphers, arr)
+local function copy_ciphers(ciphers, arr, cap)
     local n = #ciphers
+    if n > cap then n = cap end
     for i = 1, n do
         arr[i - 1] = ciphers[i]
     end
     return n
 end
 
--- Copy extension uint16 values to FFI array, excluding SNI (0x0000) and ALPN (0x0010).
--- Separate function eliminates JIT abort ("leaving loop in root trace").
-local function filter_extensions_u16(extensions, arr)
+-- Copy extension uint16 values to FFI array (clamped to cap), excluding SNI
+-- (0x0000) and ALPN (0x0010). Separate function eliminates a JIT abort.
+local function filter_extensions_u16(extensions, arr, cap)
+    local total = #extensions
+    if total > cap then total = cap end
     local n = 0
-    for i = 1, #extensions do
+    for i = 1, total do
         local ext = extensions[i]
         if ext ~= 0x0000 and ext ~= 0x0010 then
             arr[n] = ext
@@ -130,8 +140,21 @@ function _M.build(data)
         return nil, "no data"
     end
 
-    local cipher_count = math_min(#data.ciphers, 99)
-    local ext_count = math_min(#data.extensions, 99)
+    local raw_cipher_n = #data.ciphers
+    local raw_ext_n = #data.extensions
+    local cipher_count = math_min(raw_cipher_n, 99)
+    local ext_count = math_min(raw_ext_n, 99)
+    if raw_cipher_n > MAX_CIPHERS then
+        ngx_log(ngx_WARN, "ja4: ciphers truncated ", raw_cipher_n, "->", MAX_CIPHERS)
+    end
+    if raw_ext_n > MAX_EXTENSIONS then
+        ngx_log(ngx_WARN, "ja4: extensions truncated ", raw_ext_n, "->", MAX_EXTENSIONS)
+    end
+    local sig_n = data.sig_algs and #data.sig_algs or 0
+    if sig_n > MAX_SIG_ALGS then
+        ngx_log(ngx_WARN, "ja4: sig_algs truncated ", sig_n, "->", MAX_SIG_ALGS)
+        sig_n = MAX_SIG_ALGS
+    end
 
     -- Section A: 10 bytes directly into out_buf via byte writes + NUM2 lookup
     out_buf[0] = byte(data.protocol)
@@ -149,10 +172,10 @@ function _M.build(data)
     local pos = 11
 
     -- Copy to FFI arrays and sort numerically (fully JIT-inlined)
-    local cn = copy_ciphers(data.ciphers, cipher_u16)
+    local cn = copy_ciphers(data.ciphers, cipher_u16, MAX_CIPHERS)
     isort_u16(cipher_u16, cn)
 
-    local ext_n = filter_extensions_u16(data.extensions, ext_u16)
+    local ext_n = filter_extensions_u16(data.extensions, ext_u16, MAX_EXTENSIONS)
     isort_u16(ext_u16, ext_n)
 
     if _hash_mode then
@@ -160,7 +183,7 @@ function _M.build(data)
         if cn == 0 then
             ffi_copy(out_buf + pos, EMPTY_HASH, 12)
         else
-            local csv_len = write_u16_hex_csv(cipher_u16, cn, csv_buf, 0)
+            local csv_len = write_u16_hex_csv(cipher_u16, cn, csv_buf, 0, CSV_BUF_SIZE)
             sha256_to_buf(csv_buf, csv_len, out_buf, pos)
         end
         pos = pos + 12  -- 23
@@ -168,12 +191,12 @@ function _M.build(data)
         out_buf[pos] = 0x5F; pos = pos + 1  -- 24
 
         -- Section C: sorted exts + sig_algs -> csv_buf -> SHA256 -> 12 hex bytes
-        local sc_len = write_u16_hex_csv(ext_u16, ext_n, csv_buf, 0)
-        if data.sig_algs and #data.sig_algs > 0 then
+        local sc_len = write_u16_hex_csv(ext_u16, ext_n, csv_buf, 0, CSV_BUF_SIZE)
+        if sig_n > 0 then
             csv_buf[sc_len] = 0x5F  -- '_'
-            sc_len = write_hex4_csv_at(data.sig_algs, #data.sig_algs, csv_buf, sc_len + 1)
+            sc_len = write_hex4_csv_at(data.sig_algs, sig_n, csv_buf, sc_len + 1, CSV_BUF_SIZE)
         end
-        if ext_n == 0 and (not data.sig_algs or #data.sig_algs == 0) then
+        if ext_n == 0 and sig_n == 0 then
             ffi_copy(out_buf + pos, EMPTY_HASH, 12)
         else
             sha256_to_buf(csv_buf, sc_len, out_buf, pos)
@@ -181,15 +204,15 @@ function _M.build(data)
         pos = pos + 12  -- 36
     else
         -- Section B raw: hex CSV directly into out_buf
-        pos = write_u16_hex_csv(cipher_u16, cn, out_buf, pos)
+        pos = write_u16_hex_csv(cipher_u16, cn, out_buf, pos, OUT_BUF_SIZE)
 
         out_buf[pos] = 0x5F; pos = pos + 1
 
         -- Section C raw: exts CSV + '_' + sig_algs CSV
-        pos = write_u16_hex_csv(ext_u16, ext_n, out_buf, pos)
-        if data.sig_algs and #data.sig_algs > 0 then
+        pos = write_u16_hex_csv(ext_u16, ext_n, out_buf, pos, OUT_BUF_SIZE)
+        if sig_n > 0 then
             out_buf[pos] = 0x5F; pos = pos + 1
-            pos = write_hex4_csv_at(data.sig_algs, #data.sig_algs, out_buf, pos)
+            pos = write_hex4_csv_at(data.sig_algs, sig_n, out_buf, pos, OUT_BUF_SIZE)
         end
     end
 

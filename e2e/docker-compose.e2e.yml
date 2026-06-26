@@ -1,6 +1,6 @@
 services:
   nginx:
-    image: openresty/openresty:1.27.1.2-11-jammy
+    image: openresty/openresty:1.31.1.1-1-jammy
     volumes:
       - ../lib:/app/lib:ro
       - ./nginx.conf:/usr/local/openresty/nginx/conf/nginx.conf:ro

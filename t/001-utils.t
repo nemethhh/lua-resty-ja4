@@ -425,9 +425,9 @@ local buf = ffi.new("uint8_t[16]")
 local arr = ffi.new("uint16_t[10]")
 for i = 0, 9 do arr[i] = 0x1234 end
 local pos = utils.write_u16_hex_csv(arr, 10, buf, 0, 16)
-ngx.say("within_cap: ", tostring(pos <= 16))
+ngx.say("pos: ", pos)
 --- response_body
-within_cap: true
+pos: 14
 
 === TEST: write_str_csv_at respects cap (no overflow)
 --- http_config eval: $::HttpConfig
@@ -438,9 +438,9 @@ local buf = ffi.new("uint8_t[16]")
 local arr = {}
 for i = 1, 20 do arr[i] = "longheadername" end
 local pos = utils.write_str_csv_at(arr, 20, buf, 0, 16)
-ngx.say("within_cap: ", tostring(pos <= 16))
+ngx.say("pos: ", pos)
 --- response_body
-within_cap: true
+pos: 14
 
 === TEST: parse_cookies_into caps cookie count and reports truncation
 --- http_config eval: $::HttpConfig

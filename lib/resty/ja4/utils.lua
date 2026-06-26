@@ -160,7 +160,7 @@ local function write_u16_hex_csv(arr, n, buf, offset, cap)
     if n == 0 then return offset end
     local pos = offset
     for i = 0, n - 1 do
-        if cap and pos + 5 > cap then break end
+        if cap and pos + (i > 0 and 5 or 4) > cap then break end
         if i > 0 then
             buf[pos] = 0x2C  -- ','
             pos = pos + 1
@@ -180,7 +180,7 @@ _M.write_u16_hex_csv = write_u16_hex_csv
 local function write_hex4_csv_at(hex_array, n, buf, pos, cap)
     if n == 0 then return pos end
     for i = 1, n do
-        if cap and pos + 5 > cap then break end
+        if cap and pos + (i > 1 and 5 or 4) > cap then break end
         if i > 1 then
             buf[pos] = 0x2C  -- ','
             pos = pos + 1
@@ -317,7 +317,7 @@ function _M.parse_cookies_into(cookie_str, names, pairs_list, max_cookies)
     if not cookie_str or cookie_str == "" then
         for i = 1, #names do names[i] = nil end
         for i = 1, #pairs_list do pairs_list[i] = nil end
-        return 0
+        return 0, false
     end
     local n = 0
     local truncated = false

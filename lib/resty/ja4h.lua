@@ -315,6 +315,15 @@ local function get_http_version()
     return "00"
 end
 
+-- get_headers() returns repeated fields as an array; JA4H uses the first
+-- occurrence (FoxIO's HTTP/1 extraction policy, and the HTTP/2+ language path).
+local function first_value(v)
+    if type(v) == "table" then
+        return v[1]
+    end
+    return v
+end
+
 -- Internal: compute via FFI path (used for HTTP/2+, exposed for testing)
 local function compute_ffi_path()
     local method = ngx.req.get_method()
@@ -361,8 +370,8 @@ function _M.compute()
             has_cookie      = headers["cookie"] ~= nil,
             has_referer     = headers["referer"] ~= nil,
             header_names    = header_names,
-            accept_language = headers["accept-language"],
-            cookie_str      = headers["cookie"],
+            accept_language = first_value(headers["accept-language"]),
+            cookie_str      = first_value(headers["cookie"]),
         })
     end
 

@@ -168,6 +168,7 @@ Raw mode (`hash = false`) emits full CSV sections for debugging and comparisons.
 - `store()` / `get()` use `ngx.ctx`, so values are request-local.
 - JA4 extension visibility depends on what OpenSSL reports through ClientHello APIs. Some wire extensions may be omitted by OpenSSL and therefore not appear in JA4 section C.
 - JA4H excludes `Cookie` and `Referer` from the header-name hash section by design (they are represented by flags and cookie sections).
+- On HTTP/1.x, a repeated `Cookie` or `Accept-Language` field contributes only its first occurrence to the JA4H cookie and language sections (FoxIO's HTTP/1 policy). HTTP/2+ joins split `Cookie` fields per RFC 9113. Repeated fields still count in the header-name section.
 
 ## Development
 

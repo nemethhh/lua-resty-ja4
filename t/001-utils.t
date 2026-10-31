@@ -2,7 +2,7 @@ use Test::Nginx::Socket::Lua;
 use Cwd qw(cwd);
 
 repeat_each(1);
-plan tests => repeat_each() * 2 * 25;
+plan tests => repeat_each() * 2 * 26;
 
 no_shuffle();
 
@@ -455,3 +455,18 @@ ngx.say("crlf: ", n, " ", table.concat(names, ","))
 lf: 3 Host,User-Agent,Accept
 mixed: 3 Host,User-Agent,Accept
 crlf: 2 Host,Accept
+
+=== TEST 26: parse_cookies_into keeps name-only cookies; isort_cookies orders pairs by name
+--- http_config eval: $::HttpConfig
+--- lua_code
+local utils = require "resty.ja4.utils"
+local names, pairs_list = {}, {}
+local n = utils.parse_cookies_into("id2=x; flag; id=1", names, pairs_list)
+utils.isort_cookies(names, pairs_list, n)
+ngx.say("count: ", n)
+ngx.say("names: ", table.concat(names, ","))
+ngx.say("pairs: ", table.concat(pairs_list, ","))
+--- response_body
+count: 3
+names: flag,id,id2
+pairs: flag,id=1,id2=x

@@ -133,6 +133,24 @@ local function isort(t, n)
 end
 _M.isort = isort
 
+-- Sort parallel cookie name/pair arrays by name, then pair. FoxIO orders the
+-- pairs by cookie name; sorting "name=value" strings misorders "id2=" before "id=".
+local function isort_cookies(names, pairs_list, n)
+    for i = 2, n do
+        local name, pair = names[i], pairs_list[i]
+        local j = i - 1
+        while j >= 1 and (names[j] > name
+                or (names[j] == name and pairs_list[j] > pair)) do
+            names[j + 1] = names[j]
+            pairs_list[j + 1] = pairs_list[j]
+            j = j - 1
+        end
+        names[j + 1] = name
+        pairs_list[j + 1] = pair
+    end
+end
+_M.isort_cookies = isort_cookies
+
 -- 0-based insertion sort for FFI uint16_t arrays.
 local function isort_u16(arr, n)
     for i = 1, n - 1 do
@@ -361,17 +379,19 @@ function _M.parse_cookies_into(cookie_str, names, pairs_list, max_cookies)
             seg_end = seg_end - 1
         end
         if seg_end >= pos then
+            -- A segment without '=' is a name-only cookie (FoxIO keeps it).
             local eq = str_find(cookie_str, "=", pos, true)
+            local name_end = seg_end
             if eq and eq <= seg_end then
-                local name_end = eq - 1
+                name_end = eq - 1
                 while name_end >= pos and byte(cookie_str, name_end) == 0x20 do
                     name_end = name_end - 1
                 end
-                if name_end >= pos then
-                    n = n + 1
-                    names[n] = str_sub(cookie_str, pos, name_end)
-                    pairs_list[n] = str_sub(cookie_str, pos, seg_end)
-                end
+            end
+            if name_end >= pos then
+                n = n + 1
+                names[n] = str_sub(cookie_str, pos, name_end)
+                pairs_list[n] = str_sub(cookie_str, pos, seg_end)
             end
         end
         pos = semi and (semi + 2) or (len + 1)

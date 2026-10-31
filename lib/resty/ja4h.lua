@@ -27,7 +27,7 @@ local _ck_join = ffi_new("uint8_t[" .. BUF_SIZE .. "]")
 
 local new_tab = utils.new_tab
 local EMPTY_HASH = utils.EMPTY_HASH
-local isort = utils.isort
+local isort_cookies = utils.isort_cookies
 local sha256_to_buf = utils.sha256_to_buf
 local write_str_csv_at = utils.write_str_csv_at
 local NUM2 = utils.NUM2
@@ -227,15 +227,14 @@ function _M.build(data)
             end
             if cn > 0 then
                 -- Section C: sorted cookie names -> hash
-                isort(_cookie_names, cn)
+                isort_cookies(_cookie_names, _cookie_pairs, cn)
                 local nlen = write_str_csv_at(_cookie_names, cn, hash_buf, 0, BUF_SIZE)
                 sha256_to_buf(hash_buf, nlen, out_buf, pos)
                 pos = pos + 12
 
                 out_buf[pos] = 0x5F; pos = pos + 1
 
-                -- Section D: sorted cookie pairs -> hash
-                isort(_cookie_pairs, cn)
+                -- Section D: cookie pairs in name order -> hash
                 local plen = write_str_csv_at(_cookie_pairs, cn, hash_buf, 0, BUF_SIZE)
                 sha256_to_buf(hash_buf, plen, out_buf, pos)
                 pos = pos + 12
@@ -266,12 +265,11 @@ function _M.build(data)
                 ngx_log(ngx_WARN, "ja4: cookies truncated to ", MAX_COOKIES)
             end
             if cn > 0 then
-                isort(_cookie_names, cn)
+                isort_cookies(_cookie_names, _cookie_pairs, cn)
                 pos = write_str_csv_at(_cookie_names, cn, out_buf, pos, BUF_SIZE)
 
                 if pos < BUF_SIZE then out_buf[pos] = 0x5F; pos = pos + 1 end
 
-                isort(_cookie_pairs, cn)
                 pos = write_str_csv_at(_cookie_pairs, cn, out_buf, pos, BUF_SIZE)
             else
                 -- Empty section C, separator, empty section D

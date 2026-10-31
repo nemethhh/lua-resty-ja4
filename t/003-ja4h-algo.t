@@ -2,7 +2,7 @@ use Test::Nginx::Socket::Lua;
 use Cwd qw(cwd);
 
 repeat_each(1);
-plan tests => repeat_each() * (2 * 18 + 6);
+plan tests => repeat_each() * (2 * 19 + 6);
 
 no_shuffle();
 
@@ -355,3 +355,21 @@ ja4h.configure({ hash = true })
 ngx.say("ok: ", tostring(result ~= nil and #result > 0 and #result <= 16384))
 --- response_body
 ok: true
+
+=== TEST: JA4H cookie sections order pairs by name and keep name-only cookies
+--- http_config eval: $::HttpConfig
+--- lua_code
+local ja4h = require "resty.ja4h"
+ja4h.configure({ hash = false })
+local result = ja4h.build({
+    method = "GET", version = "11", has_cookie = true, has_referer = false,
+    header_names = {"Host"}, accept_language = nil,
+    cookie_str = "id2=x; flag; id=1",
+})
+ja4h.configure({ hash = true })
+local _, _, names, pairs_ = result:match("^([^_]*)_([^_]*)_([^_]*)_([^_]*)$")
+ngx.say("names: ", names)
+ngx.say("pairs: ", pairs_)
+--- response_body
+names: flag,id,id2
+pairs: flag,id=1,id2=x

@@ -133,6 +133,24 @@ local function isort(t, n)
 end
 _M.isort = isort
 
+-- Sort parallel cookie name/pair arrays by name, then pair. FoxIO orders the
+-- pairs by cookie name; sorting "name=value" strings misorders "id2=" before "id=".
+local function isort_cookies(names, pairs_list, n)
+    for i = 2, n do
+        local name, pair = names[i], pairs_list[i]
+        local j = i - 1
+        while j >= 1 and (names[j] > name
+                or (names[j] == name and pairs_list[j] > pair)) do
+            names[j + 1] = names[j]
+            pairs_list[j + 1] = pairs_list[j]
+            j = j - 1
+        end
+        names[j + 1] = name
+        pairs_list[j + 1] = pair
+    end
+end
+_M.isort_cookies = isort_cookies
+
 -- 0-based insertion sort for FFI uint16_t arrays.
 local function isort_u16(arr, n)
     for i = 1, n - 1 do
@@ -264,9 +282,11 @@ function _M.parse_alpn(raw)
     local last_byte = byte(raw, 3 + proto_len)
     if is_alnum(first_byte) and is_alnum(last_byte) then
         return char(first_byte, last_byte)
-    else
-        return HEX4[first_byte * 256 + last_byte]
     end
+    -- JA4 spec: first and last chars of the value's hex, i.e. first byte's high
+    -- nibble and last byte's low nibble (0xAB 0xCD -> "ad").
+    local hex = HEX4[first_byte * 256 + last_byte]
+    return char(byte(hex, 1), byte(hex, 4))
 end
 
 function _M.parse_sig_algs(raw)
@@ -359,17 +379,19 @@ function _M.parse_cookies_into(cookie_str, names, pairs_list, max_cookies)
             seg_end = seg_end - 1
         end
         if seg_end >= pos then
+            -- A segment without '=' is a name-only cookie (FoxIO keeps it).
             local eq = str_find(cookie_str, "=", pos, true)
+            local name_end = seg_end
             if eq and eq <= seg_end then
-                local name_end = eq - 1
+                name_end = eq - 1
                 while name_end >= pos and byte(cookie_str, name_end) == 0x20 do
                     name_end = name_end - 1
                 end
-                if name_end >= pos then
-                    n = n + 1
-                    names[n] = str_sub(cookie_str, pos, name_end)
-                    pairs_list[n] = str_sub(cookie_str, pos, seg_end)
-                end
+            end
+            if name_end >= pos then
+                n = n + 1
+                names[n] = str_sub(cookie_str, pos, name_end)
+                pairs_list[n] = str_sub(cookie_str, pos, seg_end)
             end
         end
         pos = semi and (semi + 2) or (len + 1)
@@ -390,12 +412,20 @@ function _M.parse_raw_header_names(raw)
     local pos = 1
     local len = #raw
     while pos <= len do
-        local cr = str_find(raw, "\r\n", pos, true)
-        if not cr or cr == pos then
+        -- nginx accepts bare LF line endings as well as CRLF.
+        local lf = str_find(raw, "\n", pos, true)
+        if not lf then
+            break
+        end
+        local eol = lf
+        if eol > pos and byte(raw, eol - 1) == 0x0D then
+            eol = eol - 1
+        end
+        if eol == pos then
             break
         end
         local colon = str_find(raw, ":", pos, true)
-        if colon and colon < cr then
+        if colon and colon < eol then
             local name_len = colon - pos
             local skip = false
             if name_len == 6 then
@@ -414,7 +444,7 @@ function _M.parse_raw_header_names(raw)
                 names[n] = str_sub(raw, pos, colon - 1)
             end
         end
-        pos = cr + 2
+        pos = lf + 1
     end
     return names, n
 end

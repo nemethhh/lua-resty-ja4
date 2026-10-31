@@ -1,4 +1,7 @@
+import http.client
 import re
+
+from conftest import NGINX_HOST, RAW_PORT, _make_ssl_context
 
 
 # JA4H hash: 12-char section_a + 3x _<12hex> = 12 + 3*(1+12) = 51 chars
@@ -104,3 +107,35 @@ class TestJA4HRaw:
         ja4h = headers["x-ja4h"]
         # Hash mode is always 51 chars; raw mode is typically longer
         assert len(ja4h) > 51, f"Raw JA4H should be longer than 51 chars, got {len(ja4h)}"
+
+
+def _request_with_repeated_headers(port, header_lines):
+    """HTTP/1.1 request that may repeat a header field (http.client's dict API can't)."""
+    conn = http.client.HTTPSConnection(NGINX_HOST, port, context=_make_ssl_context())
+    conn.putrequest("GET", "/")
+    for name, value in header_lines:
+        conn.putheader(name, value)
+    conn.endheaders()
+    resp = conn.getresponse()
+    headers = {k.lower(): v for k, v in resp.getheaders()}
+    resp.read()
+    conn.close()
+    return headers
+
+
+class TestJA4HRepeatedHeaders:
+    """Repeated HTTP/1.x fields must not break compute() (issue #5)."""
+
+    def test_repeated_cookie_and_language_use_first_field(self):
+        headers = _request_with_repeated_headers(RAW_PORT, [
+            ("Cookie", "a=1"),
+            ("Cookie", "b=2"),
+            ("Accept-Language", "en-US"),
+            ("Accept-Language", "pt-BR"),
+        ])
+        assert "x-ja4h" in headers, f"X-JA4H header missing. Headers: {headers}"
+        section_a, _, cookie_names, cookie_pairs = headers["x-ja4h"].split("_")
+        assert section_a[4] == "c"
+        assert section_a[8:12] == "enus"
+        assert cookie_names == "a"
+        assert cookie_pairs == "a=1"

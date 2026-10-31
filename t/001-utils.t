@@ -2,7 +2,7 @@ use Test::Nginx::Socket::Lua;
 use Cwd qw(cwd);
 
 repeat_each(1);
-plan tests => repeat_each() * 2 * 24;
+plan tests => repeat_each() * 2 * 26;
 
 no_shuffle();
 
@@ -247,11 +247,21 @@ ngx.say("single: ", utils.parse_alpn(raw1))
 -- Two non-alnum bytes 0x01,0x02: [list_len=3][proto_len=2][0x01][0x02]
 local raw2 = "\x00\x03\x02\x01\x02"
 ngx.say("double: ", utils.parse_alpn(raw2))
--- Note: parse_alpn returns 4-char hex for non-alnum via HEX4 lookup.
--- build() only uses the first 2 chars for the ALPN field.
+-- JA4 spec examples: first and last chars of the value's hex
+ngx.say("abcd: ", utils.parse_alpn("\x00\x03\x02\xab\xcd"))
+ngx.say("30ab: ", utils.parse_alpn("\x00\x03\x02\x30\xab"))
+ngx.say("2061: ", utils.parse_alpn("\x00\x03\x02\x20\x61"))
+ngx.say("3031abcd: ", utils.parse_alpn("\x00\x05\x04\x30\x31\xab\xcd"))
+-- Envoy tls_inspector vector: "`2" -> "62"
+ngx.say("envoy: ", utils.parse_alpn("\x00\x03\x02\x60\x32"))
 --- response_body
-single: 0101
-double: 0102
+single: 01
+double: 02
+abcd: ad
+30ab: 3b
+2061: 21
+3031abcd: 3d
+envoy: 62
 
 === TEST 14: parse_alpn with empty/short input
 --- http_config eval: $::HttpConfig
@@ -430,3 +440,33 @@ ngx.say(all_grease == nil and "nil" or "notnil")
 --- response_body
 0403,0804
 nil
+
+=== TEST 25: parse_raw_header_names accepts bare LF line endings (as nginx does)
+--- http_config eval: $::HttpConfig
+--- lua_code
+local utils = require "resty.ja4.utils"
+local names, n = utils.parse_raw_header_names("Host: x\nUser-Agent: u\nAccept: */*\n\n")
+ngx.say("lf: ", n, " ", table.concat(names, ","))
+names, n = utils.parse_raw_header_names("Host: x\nUser-Agent: u\r\nAccept: */*\r\n\r\n")
+ngx.say("mixed: ", n, " ", table.concat(names, ","))
+names, n = utils.parse_raw_header_names("Host: x\r\nAccept: */*\r\n\r\nBody: ignored\r\n")
+ngx.say("crlf: ", n, " ", table.concat(names, ","))
+--- response_body
+lf: 3 Host,User-Agent,Accept
+mixed: 3 Host,User-Agent,Accept
+crlf: 2 Host,Accept
+
+=== TEST 26: parse_cookies_into keeps name-only cookies; isort_cookies orders pairs by name
+--- http_config eval: $::HttpConfig
+--- lua_code
+local utils = require "resty.ja4.utils"
+local names, pairs_list = {}, {}
+local n = utils.parse_cookies_into("id2=x; flag; id=1", names, pairs_list)
+utils.isort_cookies(names, pairs_list, n)
+ngx.say("count: ", n)
+ngx.say("names: ", table.concat(names, ","))
+ngx.say("pairs: ", table.concat(pairs_list, ","))
+--- response_body
+count: 3
+names: flag,id,id2
+pairs: flag,id=1,id2=x

@@ -2,7 +2,7 @@ use Test::Nginx::Socket::Lua;
 use Cwd qw(cwd);
 
 repeat_each(1);
-plan tests => repeat_each() * 2 * 10;
+plan tests => repeat_each() * 2 * 15;
 
 no_shuffle();
 
@@ -207,3 +207,120 @@ Referer: http://test.com
 --- response_body
 match: yes
 len: 51
+
+=== TEST 11: ja4h.compute with repeated Accept-Language uses the first field
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local ja4h = require "resty.ja4h"
+            local ok, hash = pcall(ja4h.compute)
+            ngx.say("ok: ", ok, " lang: ", ok and hash and hash:sub(9, 12))
+        }
+    }
+--- request
+GET /t
+--- more_headers
+Accept-Language: en-US
+Accept-Language: pt-BR
+--- response_body
+ok: true lang: enus
+
+=== TEST 12: ja4h.compute with repeated HTTP/1.x Cookie uses the first field
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local ja4h = require "resty.ja4h"
+            local ok, hash = pcall(ja4h.compute)
+            if not ok or not hash then
+                ngx.say("error: ", tostring(hash))
+                return
+            end
+            local function cookie_sections(fp)
+                return fp:match("^[^_]+_[^_]+_([^_]+_[^_]+)$")
+            end
+            local base = { method = "GET", version = "11", has_cookie = true,
+                           has_referer = false, header_names = {} }
+            base.cookie_str = "a=1"
+            local first_only = cookie_sections(ja4h.build(base))
+            base.cookie_str = "a=1; b=2"
+            local joined = cookie_sections(ja4h.build(base))
+            local got = cookie_sections(hash)
+            ngx.say("cookie_flag: ", hash:sub(5, 5))
+            ngx.say("first_only: ", got == first_only)
+            ngx.say("joined: ", got == joined)
+        }
+    }
+--- request
+GET /t
+--- more_headers
+Cookie: a=1
+Cookie: b=2
+Accept-Language: en-US
+--- response_body
+cookie_flag: c
+first_only: true
+joined: false
+
+=== TEST 13: ja4h.compute with repeated Cookie and Accept-Language does not raise
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local ja4h = require "resty.ja4h"
+            local ok, hash = pcall(ja4h.compute)
+            ngx.say("ok: ", ok)
+            ngx.say("stored: ", ok and ja4h.get() == hash)
+            ngx.say("a: ", ok and hash:sub(1, 6) .. hash:sub(9, 12))
+        }
+    }
+--- request
+GET /t
+--- more_headers
+Cookie: a=1
+Cookie: b=2
+Accept-Language: en-US
+Accept-Language: pt-BR
+--- response_body
+ok: true
+stored: true
+a: ge11cnenus
+
+=== TEST 14: ja4h.compute with a 1-char HTTP method does not raise
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local ja4h = require "resty.ja4h"
+            local ok, hash = pcall(ja4h.compute)
+            ngx.say("ok: ", ok, " a: ", ok and hash and hash:sub(1, 4))
+            ngx.say("len: ", ok and hash and #hash)
+        }
+    }
+--- raw_request eval
+"A /t HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+--- response_body
+ok: true a: a011
+len: 51
+
+=== TEST 15: ja4h.compute counts headers on bare-LF HTTP/1.1 requests like CRLF ones
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local ja4h = require "resty.ja4h"
+            local hash = ja4h.compute()
+            local expected = ja4h.build({
+                method = "GET", version = "11", has_cookie = false, has_referer = false,
+                header_names = {"Host", "User-Agent", "Connection"},
+            })
+            ngx.say("a: ", hash:sub(1, 12))
+            ngx.say("match: ", hash == expected)
+        }
+    }
+--- raw_request eval
+"GET /t HTTP/1.1\nHost: localhost\nUser-Agent: u\nConnection: close\n\n"
+--- response_body
+a: ge11nn030000
+match: true

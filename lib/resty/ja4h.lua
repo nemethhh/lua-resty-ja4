@@ -27,7 +27,7 @@ local _ck_join = ffi_new("uint8_t[" .. BUF_SIZE .. "]")
 
 local new_tab = utils.new_tab
 local EMPTY_HASH = utils.EMPTY_HASH
-local isort = utils.isort
+local isort_cookies = utils.isort_cookies
 local sha256_to_buf = utils.sha256_to_buf
 local write_str_csv_at = utils.write_str_csv_at
 local NUM2 = utils.NUM2
@@ -179,11 +179,8 @@ function _M.build(data)
     -- Method: first 2 lowercase chars (table lookup for common methods)
     local method_code = METHOD_CODE[data.method]
     if not method_code then
-        if data.method and #data.method >= 2 then
-            method_code = str_lower(str_sub(data.method, 1, 2))
-        else
-            method_code = str_lower(data.method or "??")
-        end
+        -- nginx accepts 1-char methods; pad so section A stays 12 bytes.
+        method_code = str_sub(str_lower(data.method or "??") .. "00", 1, 2)
     end
 
     local raw_header_n = #data.header_names
@@ -230,15 +227,14 @@ function _M.build(data)
             end
             if cn > 0 then
                 -- Section C: sorted cookie names -> hash
-                isort(_cookie_names, cn)
+                isort_cookies(_cookie_names, _cookie_pairs, cn)
                 local nlen = write_str_csv_at(_cookie_names, cn, hash_buf, 0, BUF_SIZE)
                 sha256_to_buf(hash_buf, nlen, out_buf, pos)
                 pos = pos + 12
 
                 out_buf[pos] = 0x5F; pos = pos + 1
 
-                -- Section D: sorted cookie pairs -> hash
-                isort(_cookie_pairs, cn)
+                -- Section D: cookie pairs in name order -> hash
                 local plen = write_str_csv_at(_cookie_pairs, cn, hash_buf, 0, BUF_SIZE)
                 sha256_to_buf(hash_buf, plen, out_buf, pos)
                 pos = pos + 12
@@ -269,12 +265,11 @@ function _M.build(data)
                 ngx_log(ngx_WARN, "ja4: cookies truncated to ", MAX_COOKIES)
             end
             if cn > 0 then
-                isort(_cookie_names, cn)
+                isort_cookies(_cookie_names, _cookie_pairs, cn)
                 pos = write_str_csv_at(_cookie_names, cn, out_buf, pos, BUF_SIZE)
 
                 if pos < BUF_SIZE then out_buf[pos] = 0x5F; pos = pos + 1 end
 
-                isort(_cookie_pairs, cn)
                 pos = write_str_csv_at(_cookie_pairs, cn, out_buf, pos, BUF_SIZE)
             else
                 -- Empty section C, separator, empty section D
@@ -313,6 +308,15 @@ local function get_http_version()
     if proto == "HTTP/1.0" then return "10" end
     if proto == "HTTP/3.0" or proto == "HTTP/3" then return "30" end
     return "00"
+end
+
+-- get_headers() returns repeated fields as an array; JA4H uses the first
+-- occurrence (FoxIO's HTTP/1 extraction policy, and the HTTP/2+ language path).
+local function first_value(v)
+    if type(v) == "table" then
+        return v[1]
+    end
+    return v
 end
 
 -- Internal: compute via FFI path (used for HTTP/2+, exposed for testing)
@@ -361,8 +365,8 @@ function _M.compute()
             has_cookie      = headers["cookie"] ~= nil,
             has_referer     = headers["referer"] ~= nil,
             header_names    = header_names,
-            accept_language = headers["accept-language"],
-            cookie_str      = headers["cookie"],
+            accept_language = first_value(headers["accept-language"]),
+            cookie_str      = first_value(headers["cookie"]),
         })
     end
 

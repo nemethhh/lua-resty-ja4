@@ -201,6 +201,21 @@ local VERSION_PRIORITY = {
     ["TLSv1.3"] = 6,
 }
 
+-- QUIC ClientHellos must carry quic_transport_parameters (RFC 9001 §8.2);
+-- SSL_is_quic() is false under nginx's QUIC-TLS callback integration.
+local EXT_QUIC_TRANSPORT_PARAMS = 0x0039
+
+local function detect_protocol(extensions)
+    for i = 1, #extensions do
+        if extensions[i] == EXT_QUIC_TRANSPORT_PARAMS then
+            return "q"
+        end
+    end
+    return "t"
+end
+
+_M._detect_protocol = detect_protocol
+
 -- Compute JA4 from current ssl_client_hello context.
 -- Must be called from ssl_client_hello_by_lua_block.
 -- Stores result in ngx.ctx automatically.
@@ -220,9 +235,6 @@ function _M.compute()
     if not ssl_ptr then
         return nil, "failed to get SSL pointer: " .. (err or "unknown")
     end
-
-    -- Protocol: always TCP in OpenResty
-    local protocol = "t"
 
     -- TLS version: prefer supported_versions extension, fallback
     local version_code = "00"
@@ -256,6 +268,7 @@ function _M.compute()
     -- Extensions: official getter (GREASE filtered, pool-allocated, no manual free);
     -- includes SNI/ALPN, which build() counts in section A and excludes from the hash.
     local extensions = ssl_clt.get_client_hello_ext_present() or {}
+    local protocol = detect_protocol(extensions)
 
     -- ALPN: parse raw extension type 16
     local alpn_raw = ssl_clt.get_client_hello_ext(16)

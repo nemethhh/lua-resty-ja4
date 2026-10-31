@@ -2,7 +2,7 @@ use Test::Nginx::Socket::Lua;
 use Cwd qw(cwd);
 
 repeat_each(1);
-plan tests => repeat_each() * (2 * 16 + 5);
+plan tests => repeat_each() * (2 * 17 + 5);
 
 no_shuffle();
 
@@ -346,3 +346,15 @@ len: 36 cc: 99 ec: 99
 ja4: ciphers truncated 300->256
 ja4: extensions truncated 300->256
 ja4: sig_algs truncated 300->256
+
+=== TEST: JA4 protocol marker detects QUIC from quic_transport_parameters (0x0039)
+--- http_config eval: $::HttpConfig
+--- lua_code
+local ja4 = require "resty.ja4"
+ngx.say("tcp: ", ja4._detect_protocol({0x0000, 0x000a, 0x0010, 0x002b}))
+ngx.say("quic: ", ja4._detect_protocol({0x0000, 0x000a, 0x0010, 0x0039, 0x002b}))
+ngx.say("empty: ", ja4._detect_protocol({}))
+--- response_body
+tcp: t
+quic: q
+empty: t

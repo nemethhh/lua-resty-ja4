@@ -247,11 +247,21 @@ ngx.say("single: ", utils.parse_alpn(raw1))
 -- Two non-alnum bytes 0x01,0x02: [list_len=3][proto_len=2][0x01][0x02]
 local raw2 = "\x00\x03\x02\x01\x02"
 ngx.say("double: ", utils.parse_alpn(raw2))
--- Note: parse_alpn returns 4-char hex for non-alnum via HEX4 lookup.
--- build() only uses the first 2 chars for the ALPN field.
+-- JA4 spec examples: first and last chars of the value's hex
+ngx.say("abcd: ", utils.parse_alpn("\x00\x03\x02\xab\xcd"))
+ngx.say("30ab: ", utils.parse_alpn("\x00\x03\x02\x30\xab"))
+ngx.say("2061: ", utils.parse_alpn("\x00\x03\x02\x20\x61"))
+ngx.say("3031abcd: ", utils.parse_alpn("\x00\x05\x04\x30\x31\xab\xcd"))
+-- Envoy tls_inspector vector: "`2" -> "62"
+ngx.say("envoy: ", utils.parse_alpn("\x00\x03\x02\x60\x32"))
 --- response_body
-single: 0101
-double: 0102
+single: 01
+double: 02
+abcd: ad
+30ab: 3b
+2061: 21
+3031abcd: 3d
+envoy: 62
 
 === TEST 14: parse_alpn with empty/short input
 --- http_config eval: $::HttpConfig

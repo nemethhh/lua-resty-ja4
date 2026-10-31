@@ -264,9 +264,11 @@ function _M.parse_alpn(raw)
     local last_byte = byte(raw, 3 + proto_len)
     if is_alnum(first_byte) and is_alnum(last_byte) then
         return char(first_byte, last_byte)
-    else
-        return HEX4[first_byte * 256 + last_byte]
     end
+    -- JA4 spec: first and last chars of the value's hex, i.e. first byte's high
+    -- nibble and last byte's low nibble (0xAB 0xCD -> "ad").
+    local hex = HEX4[first_byte * 256 + last_byte]
+    return char(byte(hex, 1), byte(hex, 4))
 end
 
 function _M.parse_sig_algs(raw)

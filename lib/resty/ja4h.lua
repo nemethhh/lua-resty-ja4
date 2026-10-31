@@ -179,11 +179,8 @@ function _M.build(data)
     -- Method: first 2 lowercase chars (table lookup for common methods)
     local method_code = METHOD_CODE[data.method]
     if not method_code then
-        if data.method and #data.method >= 2 then
-            method_code = str_lower(str_sub(data.method, 1, 2))
-        else
-            method_code = str_lower(data.method or "??")
-        end
+        -- nginx accepts 1-char methods; pad so section A stays 12 bytes.
+        method_code = str_sub(str_lower(data.method or "??") .. "00", 1, 2)
     end
 
     local raw_header_n = #data.header_names

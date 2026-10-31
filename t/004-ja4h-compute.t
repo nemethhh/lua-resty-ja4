@@ -2,7 +2,7 @@ use Test::Nginx::Socket::Lua;
 use Cwd qw(cwd);
 
 repeat_each(1);
-plan tests => repeat_each() * 2 * 13;
+plan tests => repeat_each() * 2 * 15;
 
 no_shuffle();
 
@@ -286,3 +286,41 @@ Accept-Language: pt-BR
 ok: true
 stored: true
 a: ge11cnenus
+
+=== TEST 14: ja4h.compute with a 1-char HTTP method does not raise
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local ja4h = require "resty.ja4h"
+            local ok, hash = pcall(ja4h.compute)
+            ngx.say("ok: ", ok, " a: ", ok and hash and hash:sub(1, 4))
+            ngx.say("len: ", ok and hash and #hash)
+        }
+    }
+--- raw_request eval
+"A /t HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+--- response_body
+ok: true a: a011
+len: 51
+
+=== TEST 15: ja4h.compute counts headers on bare-LF HTTP/1.1 requests like CRLF ones
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local ja4h = require "resty.ja4h"
+            local hash = ja4h.compute()
+            local expected = ja4h.build({
+                method = "GET", version = "11", has_cookie = false, has_referer = false,
+                header_names = {"Host", "User-Agent", "Connection"},
+            })
+            ngx.say("a: ", hash:sub(1, 12))
+            ngx.say("match: ", hash == expected)
+        }
+    }
+--- raw_request eval
+"GET /t HTTP/1.1\nHost: localhost\nUser-Agent: u\nConnection: close\n\n"
+--- response_body
+a: ge11nn030000
+match: true

@@ -2,7 +2,7 @@ use Test::Nginx::Socket::Lua;
 use Cwd qw(cwd);
 
 repeat_each(1);
-plan tests => repeat_each() * 2 * 24;
+plan tests => repeat_each() * 2 * 25;
 
 no_shuffle();
 
@@ -440,3 +440,18 @@ ngx.say(all_grease == nil and "nil" or "notnil")
 --- response_body
 0403,0804
 nil
+
+=== TEST 25: parse_raw_header_names accepts bare LF line endings (as nginx does)
+--- http_config eval: $::HttpConfig
+--- lua_code
+local utils = require "resty.ja4.utils"
+local names, n = utils.parse_raw_header_names("Host: x\nUser-Agent: u\nAccept: */*\n\n")
+ngx.say("lf: ", n, " ", table.concat(names, ","))
+names, n = utils.parse_raw_header_names("Host: x\nUser-Agent: u\r\nAccept: */*\r\n\r\n")
+ngx.say("mixed: ", n, " ", table.concat(names, ","))
+names, n = utils.parse_raw_header_names("Host: x\r\nAccept: */*\r\n\r\nBody: ignored\r\n")
+ngx.say("crlf: ", n, " ", table.concat(names, ","))
+--- response_body
+lf: 3 Host,User-Agent,Accept
+mixed: 3 Host,User-Agent,Accept
+crlf: 2 Host,Accept

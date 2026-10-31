@@ -392,12 +392,20 @@ function _M.parse_raw_header_names(raw)
     local pos = 1
     local len = #raw
     while pos <= len do
-        local cr = str_find(raw, "\r\n", pos, true)
-        if not cr or cr == pos then
+        -- nginx accepts bare LF line endings as well as CRLF.
+        local lf = str_find(raw, "\n", pos, true)
+        if not lf then
+            break
+        end
+        local eol = lf
+        if eol > pos and byte(raw, eol - 1) == 0x0D then
+            eol = eol - 1
+        end
+        if eol == pos then
             break
         end
         local colon = str_find(raw, ":", pos, true)
-        if colon and colon < cr then
+        if colon and colon < eol then
             local name_len = colon - pos
             local skip = false
             if name_len == 6 then
@@ -416,7 +424,7 @@ function _M.parse_raw_header_names(raw)
                 names[n] = str_sub(raw, pos, colon - 1)
             end
         end
-        pos = cr + 2
+        pos = lf + 1
     end
     return names, n
 end

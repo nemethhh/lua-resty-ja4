@@ -98,7 +98,9 @@ server {
 - `store(value)`
 - `get()`
 
-`compute()` must run in `ssl_client_hello_by_lua*` context.
+`compute()` must run in `ssl_client_hello_by_lua*` context. It emits the `q`
+protocol marker for QUIC (HTTP/3) handshakes, detected from the mandatory
+`quic_transport_parameters` extension, and `t` otherwise.
 
 `build(data)` input:
 
